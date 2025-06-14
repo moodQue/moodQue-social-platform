@@ -198,6 +198,23 @@ def log_interaction(user_email, playlist_id, interaction_type, additional_data=N
         print(f"❌ Error logging interaction: {e}")
         return False
 
+# Add a simple root route to handle the 404 error
+@app.route("/", methods=["GET"])
+def home():
+    """Root endpoint to confirm the service is running"""
+    return jsonify({
+        "status": "MoodQue Social Music Platform is running!",
+        "endpoints": {
+            "create_playlist": "/glide-webhook",
+            "social_feed": "/social/feed",
+            "leaderboard": "/social/leaderboard",
+            "like_playlist": "/social/like-playlist",
+            "mood_status": "/social/mood-status",
+            "test": "/test"
+        },
+        "timestamp": str(datetime.datetime.now())
+    }), 200
+
 @app.route("/glide-webhook", methods=["POST"])
 def create_playlist_from_glide():
     """Enhanced playlist creation with social features"""
@@ -443,6 +460,7 @@ def test_endpoint():
 
 if __name__ == "__main__":
     print("🚀 Starting MoodQue Social Music Platform...")
+    print("🏠 Home endpoint: /")
     print("📱 Playlist creation: /glide-webhook")
     print("🎵 Social feed: /social/feed")
     print("🏆 Leaderboard: /social/leaderboard") 
@@ -453,5 +471,7 @@ if __name__ == "__main__":
     # Ensure social features are set up
     ensure_social_sheets()
     
-    port = int(os.environ.get('PORT', 5000))
+    # Use Railway's PORT environment variable, fallback to 8080 for local development
+    port = int(os.environ.get('PORT', 8080))
+    print(f"🚀 Starting server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
