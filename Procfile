@@ -1,1 +1,1 @@
-web: python moodQueSocial_webhook_server.py
+web: python moodQueSocial_webhook_service.py
