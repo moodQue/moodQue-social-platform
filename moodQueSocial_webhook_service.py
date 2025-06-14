@@ -199,7 +199,7 @@ def log_interaction(user_email, playlist_id, interaction_type, additional_data=N
         return False
 
 # Add a simple root route to handle the 404 error
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def home():
     """Root endpoint to confirm the service is running"""
     return jsonify({
