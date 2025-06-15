@@ -63,7 +63,7 @@ def ensure_social_sheets():
         # Ensure User Profiles sheet exists
         try:
             spreadsheet.worksheet("User Profiles")
-        except gspread.WorksheetNotFound:
+        except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
             user_sheet = spreadsheet.add_worksheet(title="User Profiles", rows="1000", cols="15")
             headers = [
                 "User Email", "User Name", "Current Mood", "Last Active", 
@@ -76,7 +76,7 @@ def ensure_social_sheets():
         # Ensure Social Playlists sheet exists
         try:
             spreadsheet.worksheet("Social Playlists")
-        except gspread.WorksheetNotFound:
+        except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
             social_sheet = spreadsheet.add_worksheet(title="Social Playlists", rows="2000", cols="20")
             headers = [
                 "Playlist ID", "Creator Email", "Creator Name", "Event Name",
@@ -90,7 +90,7 @@ def ensure_social_sheets():
         # Ensure Social Interactions sheet exists
         try:
             spreadsheet.worksheet("Social Interactions")
-        except gspread.WorksheetNotFound:
+        except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
             interactions_sheet = spreadsheet.add_worksheet(title="Social Interactions", rows="5000", cols="10")
             headers = [
                 "Interaction ID", "User Email", "Playlist ID", "Interaction Type",
@@ -127,7 +127,7 @@ def update_user_profile(user_email, user_name, updates):
             if 'total_likes_received' in updates:
                 user_sheet.update(f"F{row_num}", updates['total_likes_received'])
             
-        except gspread.CellNotFound:
+        except (gspread.CellNotFound, gspread.exceptions.CellNotFound):
             # Create new user
             new_user_row = [
                 user_email, user_name, 
