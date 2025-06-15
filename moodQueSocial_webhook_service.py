@@ -3,6 +3,7 @@ import sys
 import os
 import datetime
 import uuid
+import json
 sys.path.append(os.path.join(os.path.dirname(__file__), "python"))
 
 import gspread
@@ -17,16 +18,41 @@ from SpotifyPlaylistBuilder import (
 app = Flask(__name__)
 
 # Setup Google Sheets API credentials
-SERVICE_ACCOUNT_FILE = "moodQue-automation-437f1e4eaa49.json"
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+def get_google_credentials():
+    """Get Google credentials from environment variable or file"""
+    # Try to get credentials from environment variable first
+    creds_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+    
+    if creds_json:
+        # Parse JSON from environment variable
+        try:
+            creds_dict = json.loads(creds_json)
+            return Credentials.from_service_account_info(creds_dict, scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ])
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parsing Google credentials from environment: {e}")
+            return None
+    else:
+        # Fallback to local file for development
+        SERVICE_ACCOUNT_FILE = "moodQue-automation-437f1e4eaa49.json"
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            return Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ])
+        else:
+            print(f"❌ No Google credentials found. Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable or place {SERVICE_ACCOUNT_FILE} in project directory.")
+            return None
 
 def get_sheets_client():
     """Get authenticated Google Sheets client"""
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    return gspread.authorize(creds)
+    creds = get_google_credentials()
+    if creds:
+        return gspread.authorize(creds)
+    else:
+        raise Exception("Failed to get Google credentials")
 
 def ensure_social_sheets():
     """Create social feature sheets if they don't exist"""
@@ -436,8 +462,19 @@ def test_endpoint():
         access_token = refresh_access_token()
         spotify_status = "✅ Connected" if access_token else "❌ Failed"
         
+        # Test Google credentials
+        try:
+            creds = get_google_credentials()
+            google_status = "✅ Connected" if creds else "❌ No credentials"
+        except Exception as e:
+            google_status = f"❌ Error: {str(e)}"
+        
         # Test social sheets
-        ensure_social_sheets()
+        try:
+            ensure_social_sheets()
+            sheets_status = "✅ Active"
+        except Exception as e:
+            sheets_status = f"❌ Error: {str(e)}"
         
         return jsonify({
             "status": "MoodQue Social Server is running",
@@ -448,8 +485,11 @@ def test_endpoint():
                 "like_playlist": "/social/like-playlist",
                 "mood_status": "/social/mood-status"
             },
-            "spotify_connection": spotify_status,
-            "social_features": "✅ Active",
+            "connections": {
+                "spotify": spotify_status,
+                "google_credentials": google_status,
+                "google_sheets": sheets_status
+            },
             "timestamp": str(datetime.datetime.now())
         }), 200
     except Exception as e:
@@ -468,8 +508,17 @@ if __name__ == "__main__":
     print("😊 Mood status: /social/mood-status")
     print("🧪 Test endpoint: /test")
     
-    # Ensure social features are set up
-    ensure_social_sheets()
+    # Check credentials
+    try:
+        creds = get_google_credentials()
+        if creds:
+            print("✅ Google credentials loaded successfully")
+            # Ensure social features are set up
+            ensure_social_sheets()
+        else:
+            print("⚠️ Google credentials not found - some features may not work")
+    except Exception as e:
+        print(f"⚠️ Google credentials error: {e}")
     
     # Use Railway's PORT environment variable, fallback to 8080 for local development
     port = int(os.environ.get('PORT', 8080))
