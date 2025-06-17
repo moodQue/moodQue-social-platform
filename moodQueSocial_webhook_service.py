@@ -80,7 +80,7 @@ def ensure_social_sheets():
             social_sheet = spreadsheet.add_worksheet(title="Social Playlists", rows="2000", cols="20")
             headers = [
                 "Playlist ID", "Creator Email", "Creator Name", "Event Name",
-                "Genre", "Mood", "Spotify URL", "Created Date", "Likes Count",
+                "Genre", "Mood", "Search Keywords", "Spotify URL", "Created Date", "Likes Count",
                 "Views Count", "Shares Count", "Tags", "Description", 
                 "Track Count", "Duration", "Is Public", "Is Trending",
                 "Last Liked", "Featured", "Playlist Type"
@@ -105,48 +105,66 @@ def ensure_social_sheets():
         return False
 
 def update_user_profile(user_email, user_name, updates):
-    """Update or create user profile"""
+    """Update or create user profile - FIXED VERSION"""
     try:
         client = get_sheets_client()
         spreadsheet = client.open("Playlist App Data")
         user_sheet = spreadsheet.worksheet("User Profiles")
         
-        # Find existing user
+        # Handle empty user_name
+        if not user_name or user_name.strip() == "":
+            user_name = user_email.split('@')[0]  # Use email prefix as fallback
+            print(f"⚠️ No user name provided, using fallback: {user_name}")
+        
+        # Find existing user - MORE ROBUST APPROACH
         try:
-            cell = user_sheet.find(user_email)
-            row_num = cell.row
-            print(f"✅ Found existing user: {user_email} at row {row_num}")
+            all_records = user_sheet.get_all_records()
+            existing_user_row = None
+            row_num = None
             
-            # Update existing user
-            user_sheet.update(f"B{row_num}", user_name)  # Update name
-            user_sheet.update(f"D{row_num}", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Last active
+            # Search for user in all records
+            for i, record in enumerate(all_records, start=2):  # Start at row 2 (after header)
+                if record.get('User Email', '').strip().lower() == user_email.strip().lower():
+                    existing_user_row = record
+                    row_num = i
+                    break
             
-            # Update specific fields
-            if 'current_mood' in updates:
-                user_sheet.update(f"C{row_num}", updates['current_mood'])
-            if 'total_playlists' in updates:
-                # Handle increment notation
-                if updates['total_playlists'] == '+1':
-                    current_val = user_sheet.acell(f"E{row_num}").value
-                    new_val = int(current_val or 0) + 1
-                    user_sheet.update(f"E{row_num}", new_val)
-                else:
-                    user_sheet.update(f"E{row_num}", updates['total_playlists'])
-            if 'total_likes_received' in updates:
-                user_sheet.update(f"F{row_num}", updates['total_likes_received'])
-            
-        except Exception as e:
-            # Check if it's a "cell not found" type error (user doesn't exist)
-            error_str = str(e).lower()
-            if "not found" in error_str or "unable to find" in error_str:
+            if existing_user_row and row_num:
+                print(f"✅ Found existing user: {user_email} at row {row_num}")
+                
+                # Update existing user
+                user_sheet.update(f"B{row_num}", user_name)  # Update name
+                user_sheet.update(f"D{row_num}", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Last active
+                
+                # Update specific fields
+                if 'current_mood' in updates:
+                    user_sheet.update(f"C{row_num}", updates['current_mood'])
+                if 'total_playlists' in updates:
+                    # Handle increment notation
+                    if updates['total_playlists'] == '+1':
+                        current_val = existing_user_row.get('Total Playlists', 0)
+                        new_val = int(current_val or 0) + 1
+                        user_sheet.update(f"E{row_num}", new_val)
+                    else:
+                        user_sheet.update(f"E{row_num}", updates['total_playlists'])
+                if 'total_likes_received' in updates:
+                    if updates['total_likes_received'] == '+1':
+                        current_val = existing_user_row.get('Total Likes Received', 0)
+                        new_val = int(current_val or 0) + 1
+                        user_sheet.update(f"F{row_num}", new_val)
+                    else:
+                        user_sheet.update(f"F{row_num}", updates['total_likes_received'])
+                
+                print(f"✅ Updated user profile for: {user_email}")
+            else:
+                # User not found - create new user
                 print(f"👤 Creating new user profile for: {user_email}")
-                # Create new user
                 new_user_row = [
                     user_email, 
                     user_name, 
                     updates.get('current_mood', ''),
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Last active
-                    updates.get('total_playlists', 0),
+                    1 if updates.get('total_playlists') == '+1' else updates.get('total_playlists', 0),
                     updates.get('total_likes_received', 0),
                     updates.get('total_likes_given', 0),
                     updates.get('favorite_genre', ''),
@@ -160,10 +178,30 @@ def update_user_profile(user_email, user_name, updates):
                 ]
                 user_sheet.append_row(new_user_row)
                 print(f"✅ Created new user profile for: {user_email}")
-            else:
-                # Re-raise if it's a different error
-                print(f"❌ Unexpected error finding user {user_email}: {e}")
-                raise e
+        
+        except Exception as search_error:
+            print(f"❌ Error during user search/update: {search_error}")
+            # Create new user as fallback
+            print(f"🔄 Creating new user as fallback for: {user_email}")
+            new_user_row = [
+                user_email, 
+                user_name, 
+                updates.get('current_mood', ''),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Last active
+                1 if updates.get('total_playlists') == '+1' else updates.get('total_playlists', 0),
+                updates.get('total_likes_received', 0),
+                updates.get('total_likes_given', 0),
+                updates.get('favorite_genre', ''),
+                updates.get('favorite_mood', ''),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Profile created
+                0,  # Streak days
+                '',  # Last streak date
+                updates.get('bio', ''),
+                updates.get('avatar', ''),
+                'active'
+            ]
+            user_sheet.append_row(new_user_row)
+            print(f"✅ Created new user profile (fallback) for: {user_email}")
         
         return True
     except Exception as e:
@@ -180,28 +218,28 @@ def save_social_playlist(playlist_data, playlist_url):
         playlist_id = str(uuid.uuid4())[:8]  # Short unique ID
         
         social_row = [
-    playlist_id,                    # A: Playlist ID
-    playlist_data.get('user_email', ''),  # B: Creator Email
-    playlist_data.get('user_name', ''),   # C: Creator Name
-    playlist_data.get('event', ''),       # D: Event Name
-    playlist_data.get('genre', ''),       # E: Genre
-    playlist_data.get('mood_tags', ''),   # F: Mood
-    playlist_data.get('search_keywords', ''),  # G: Search Keywords ← NEW COLUMN
-    playlist_url,                         # H: Spotify URL
-    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # I: Created Date
-    0,  # J: Likes count
-    0,  # K: Views count
-    0,  # L: Shares count
-    f"{playlist_data.get('fallback_artist', '')}",  # M: Tags (simplified)
-    f"A {playlist_data.get('mood_tags', '')} {playlist_data.get('genre', '')} playlist for {playlist_data.get('event', '')}",  # N: Description
-    playlist_data.get('track_count', 15),  # O: Track Count
-    playlist_data.get('time', ''),         # P: Duration
-    True,  # Q: Is public
-    False, # R: Is trending
-    '',    # S: Last liked
-    False, # T: Featured
-    playlist_data.get('playlist_type', 'clean')  # U: Playlist Type
-]
+            playlist_id,                    # A: Playlist ID
+            playlist_data.get('user_email', ''),  # B: Creator Email
+            playlist_data.get('user_name', ''),   # C: Creator Name
+            playlist_data.get('event', ''),       # D: Event Name
+            playlist_data.get('genre', ''),       # E: Genre
+            playlist_data.get('mood_tags', ''),   # F: Mood
+            playlist_data.get('search_keywords', ''),  # G: Search Keywords
+            playlist_url,                         # H: Spotify URL
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # I: Created Date
+            0,  # J: Likes count
+            0,  # K: Views count
+            0,  # L: Shares count
+            f"{playlist_data.get('fallback_artist', '')}",  # M: Tags (simplified)
+            f"A {playlist_data.get('mood_tags', '')} {playlist_data.get('genre', '')} playlist for {playlist_data.get('event', '')}",  # N: Description
+            playlist_data.get('track_count', 15),  # O: Track Count
+            playlist_data.get('time', ''),         # P: Duration
+            True,  # Q: Is public
+            False, # R: Is trending
+            '',    # S: Last liked
+            False, # T: Featured
+            playlist_data.get('playlist_type', 'clean')  # U: Playlist Type
+        ]
         
         social_sheet.append_row(social_row)
         
@@ -262,7 +300,7 @@ def home():
 
 @app.route("/glide-webhook", methods=["POST"])
 def create_playlist_from_glide():
-    """Enhanced playlist creation with social features"""
+    """Enhanced playlist creation with better error handling"""
     try:
         data = request.get_json()
         
@@ -287,9 +325,14 @@ def create_playlist_from_glide():
         fallback_artist = data.get('Fallback Artist', '')
         playlist_type = data.get('Playlist Type', 'clean')
         
-        # Extract user data
-        user_email = data.get('User Email', 'anonymous')
-        user_name = data.get('User Name', 'Anonymous User')
+        # Extract user data with fallbacks
+        user_email = data.get('User Email', 'anonymous@example.com')
+        user_name = data.get('User Name', '')
+        
+        # If no user name provided, create one from email
+        if not user_name or user_name.strip() == "":
+            user_name = user_email.split('@')[0].title()  # Use email prefix
+            print(f"⚠️ No User Name in form data, using fallback: {user_name}")
         
         # 🔍 DEBUG: Print extracted values
         print(f"🔍 Extracted - Event: '{event}'")
@@ -301,28 +344,12 @@ def create_playlist_from_glide():
         
         print(f"🎵 Creating playlist for {user_name} ({user_email}): {event}")
         
-        # ... rest of the function continues as before
-        
-        # Ensure social sheets exist
-        ensure_social_sheets()
-        
-        # Extract form data
-        event = data.get('Event')
-        genre = data.get('Genre')
-        time = data.get('Time')
-        mood_tags = data.get('Mood Tags')
-        search_keywords = data.get('Search Keywords', '')
-        fallback_artist = data.get('Fallback Artist', '')
-        playlist_type = data.get('Playlist Type', 'clean')
-        
-        # Extract user data
-        user_email = data.get('User Email', 'anonymous')
-        user_name = data.get('User Name', 'Anonymous User')
-        
-        print(f"🎵 Creating playlist for {user_name} ({user_email}): {event}")
-        
-        # Update user's current mood
-        update_user_profile(user_email, user_name, {'current_mood': mood_tags})
+        # Update user's current mood (with better error handling)
+        try:
+            update_user_profile(user_email, user_name, {'current_mood': mood_tags})
+        except Exception as profile_error:
+            print(f"⚠️ Warning: Could not update user profile: {profile_error}")
+            # Continue with playlist creation even if profile update fails
         
         artist_names = fallback_artist
         combined_keywords = search_keywords or fallback_artist or event
@@ -354,20 +381,24 @@ def create_playlist_from_glide():
                 'track_count': max(5, int(time) // 4) if time else 15
             }
             
-            playlist_id = save_social_playlist(playlist_data, playlist_url)
-            
-            # Log playlist creation
-            log_interaction(user_email, playlist_id, "playlist_created", {
-                'event': event,
-                'genre': genre,
-                'mood': mood_tags
-            })
+            try:
+                playlist_id = save_social_playlist(playlist_data, playlist_url)
+                
+                # Log playlist creation
+                log_interaction(user_email, playlist_id, "playlist_created", {
+                    'event': event,
+                    'genre': genre,
+                    'mood': mood_tags
+                })
+            except Exception as social_error:
+                print(f"⚠️ Warning: Could not save to social feed: {social_error}")
+                playlist_id = "temp_id"  # Provide fallback ID
             
             response_data = {
                 "status": "success",
                 "playlist_url": playlist_url,
                 "playlist_id": playlist_id,
-                "message": f"✅ '{event}' playlist shared to MoodQue community!",
+                "message": f"✅ '{event}' playlist created for {user_name}!",
                 "social_features": {
                     "can_like": True,
                     "can_share": True,
@@ -377,7 +408,7 @@ def create_playlist_from_glide():
                 }
             }
             
-            print(f"✅ Social playlist created: {playlist_id}")
+            print(f"✅ Playlist created successfully: {playlist_id}")
             return jsonify(response_data), 200
         else:
             return jsonify({
@@ -386,7 +417,9 @@ def create_playlist_from_glide():
             }), 500
             
     except Exception as e:
-        print(f"❌ Error in social playlist creation: {e}")
+        print(f"❌ Error in playlist creation: {e}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/social/like-playlist", methods=["POST"])
@@ -417,7 +450,7 @@ def like_playlist():
                 if record.get('Playlist ID') == playlist_id:
                     current_likes = int(record.get('Likes Count', 0))
                     new_likes = current_likes + 1
-                    social_sheet.update(f"I{i}", new_likes)  # Update Likes Count column (column I)
+                    social_sheet.update(f"J{i}", new_likes)  # Update Likes Count column (column J)
                     print(f"✅ Updated likes for playlist {playlist_id}: {current_likes} -> {new_likes}")
                     
                     # Also update creator's total likes received
