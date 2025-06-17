@@ -180,27 +180,28 @@ def save_social_playlist(playlist_data, playlist_url):
         playlist_id = str(uuid.uuid4())[:8]  # Short unique ID
         
         social_row = [
-            playlist_id,
-            playlist_data.get('user_email', ''),
-            playlist_data.get('user_name', ''),
-            playlist_data.get('event', ''),
-            playlist_data.get('genre', ''),
-            playlist_data.get('mood_tags', ''),
-            playlist_url,
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            0,  # Likes count
-            0,  # Views count
-            0,  # Shares count
-            f"{playlist_data.get('search_keywords', '')}, {playlist_data.get('fallback_artist', '')}",  # Tags
-            f"A {playlist_data.get('mood_tags', '')} {playlist_data.get('genre', '')} playlist for {playlist_data.get('event', '')}",  # Description
-            playlist_data.get('track_count', 15),
-            playlist_data.get('time', ''),
-            True,  # Is public
-            False,  # Is trending
-            '',  # Last liked
-            False,  # Featured
-            playlist_data.get('playlist_type', 'clean')
-        ]
+    playlist_id,                    # A: Playlist ID
+    playlist_data.get('user_email', ''),  # B: Creator Email
+    playlist_data.get('user_name', ''),   # C: Creator Name
+    playlist_data.get('event', ''),       # D: Event Name
+    playlist_data.get('genre', ''),       # E: Genre
+    playlist_data.get('mood_tags', ''),   # F: Mood
+    playlist_data.get('search_keywords', ''),  # G: Search Keywords ← NEW COLUMN
+    playlist_url,                         # H: Spotify URL
+    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # I: Created Date
+    0,  # J: Likes count
+    0,  # K: Views count
+    0,  # L: Shares count
+    f"{playlist_data.get('fallback_artist', '')}",  # M: Tags (simplified)
+    f"A {playlist_data.get('mood_tags', '')} {playlist_data.get('genre', '')} playlist for {playlist_data.get('event', '')}",  # N: Description
+    playlist_data.get('track_count', 15),  # O: Track Count
+    playlist_data.get('time', ''),         # P: Duration
+    True,  # Q: Is public
+    False, # R: Is trending
+    '',    # S: Last liked
+    False, # T: Featured
+    playlist_data.get('playlist_type', 'clean')  # U: Playlist Type
+]
         
         social_sheet.append_row(social_row)
         
@@ -264,10 +265,43 @@ def create_playlist_from_glide():
     """Enhanced playlist creation with social features"""
     try:
         data = request.get_json()
+        
+        # 🔍 DEBUG: Print exactly what we received from Glide
+        print("=" * 50)
+        print("🔍 DEBUG - Raw form data received:")
+        print(json.dumps(data, indent=2))
+        print("=" * 50)
+        
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
         
-        print(f"🎵 Received playlist request: {data}")
+        # Ensure social sheets exist
+        ensure_social_sheets()
+        
+        # Extract form data
+        event = data.get('Event')
+        genre = data.get('Genre')
+        time = data.get('Time')
+        mood_tags = data.get('Mood Tags')
+        search_keywords = data.get('Search Keywords', '')
+        fallback_artist = data.get('Fallback Artist', '')
+        playlist_type = data.get('Playlist Type', 'clean')
+        
+        # Extract user data
+        user_email = data.get('User Email', 'anonymous')
+        user_name = data.get('User Name', 'Anonymous User')
+        
+        # 🔍 DEBUG: Print extracted values
+        print(f"🔍 Extracted - Event: '{event}'")
+        print(f"🔍 Extracted - Genre: '{genre}'")
+        print(f"🔍 Extracted - User: '{user_name}' ({user_email})")
+        print(f"🔍 Extracted - Duration: '{time}'")
+        print(f"🔍 Extracted - Mood: '{mood_tags}'")
+        print(f"🔍 Extracted - Keywords: '{search_keywords}'")
+        
+        print(f"🎵 Creating playlist for {user_name} ({user_email}): {event}")
+        
+        # ... rest of the function continues as before
         
         # Ensure social sheets exist
         ensure_social_sheets()
