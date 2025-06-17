@@ -127,7 +127,7 @@ def update_user_profile(user_email, user_name, updates):
             if 'total_likes_received' in updates:
                 user_sheet.update(f"F{row_num}", updates['total_likes_received'])
             
-        except (gspread.CellNotFound, gspread.exceptions.CellNotFound):
+        except  (gspread.exceptions.CellNotFound):
             # Create new user
             new_user_row = [
                 user_email, user_name, 
