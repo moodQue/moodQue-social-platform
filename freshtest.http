@@ -1,0 +1,15 @@
+### Test Fresh Data - MoodQue Webhook
+POST https://web-production-ed9ad.up.railway.app/glide-webhook
+Content-Type: application/json
+
+{
+  "Event": "Fresh Direct Test",
+  "Genre": "pop",
+  "Mood Tags": "Energetic",
+  "User Email": "test@example.com",
+  "User Name": "Test User",
+  "Time": 45,
+  "Playlist Type": "clean",
+  "Fallback Artist": "Taylor Swift",
+  "Search Keywords": "upbeat energetic"
+}

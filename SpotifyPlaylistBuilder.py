@@ -45,7 +45,7 @@ GENRE_MAPPING = {
     "jazz": "jazz",
     "classical": "classical",
     "country": "country",
-    "lo-fi": "chill",  # lo-fi maps to chill
+    "lo-fi": "chill",
     "indie": "indie",
     "r-n-b": "r-n-b",
     "funk": "funk",
@@ -53,7 +53,7 @@ GENRE_MAPPING = {
     "reggae": "reggae",
     "latin": "latin",
     "blues": "blues",
-    "grunge": "grunge",  # Now supported!
+    "grunge": "grunge",
     "alternative": "alternative",
     "metal": "metal",
     "electronic": "electronic"
@@ -149,42 +149,62 @@ def get_enhanced_mood_values(mood):
         "romantic": {
             "target_energy": 0.4, "target_valence": 0.6, "target_danceability": 0.5,
             "target_acousticness": 0.5, "max_tempo": 100
+        },
+        "energetic": {
+            "target_energy": 0.9, "target_valence": 0.8, "target_danceability": 0.85,
+            "min_energy": 0.8, "target_tempo": 125
         }
     }
     return mood_map.get(mood.lower(), {})
 
-def sanitize_genre(genre):
-    """Map app genres to valid Spotify genres"""
-    if not genre or genre.lower() == "any":
-        return None
+def parse_genre_list(genre_input):
+    """Parse comma-separated genres and map them to Spotify genres"""
+    if not genre_input or genre_input.lower() == "any":
+        return ["pop"]  # Default fallback
+    
+    # Split by commas and clean up
+    genres = [g.strip().lower() for g in genre_input.split(',') if g.strip()]
+    mapped_genres = []
+    
+    for genre in genres:
+        # Remove any extra spaces or characters
+        clean_genre = genre.replace(" ", "-")
         
-    genre_clean = genre.strip().lower().replace(" ", "-")
+        # Map to Spotify genre
+        if clean_genre in GENRE_MAPPING:
+            mapped_genres.append(GENRE_MAPPING[clean_genre])
+        elif clean_genre in SPOTIFY_VALID_GENRES:
+            mapped_genres.append(clean_genre)
+        else:
+            # Try to find similar genre
+            for valid_genre in SPOTIFY_VALID_GENRES:
+                if clean_genre in valid_genre or valid_genre in clean_genre:
+                    mapped_genres.append(valid_genre)
+                    break
     
-    # Check if it's directly in our mapping
-    if genre_clean in GENRE_MAPPING:
-        spotify_genre = GENRE_MAPPING[genre_clean]
-        print(f"🎵 Genre mapped: '{genre}' → '{spotify_genre}'")
-        return spotify_genre
+    # Remove duplicates and limit to 3 genres for better results
+    unique_genres = list(set(mapped_genres))[:3]
     
-    # Check if it's already a valid Spotify genre
-    if genre_clean in SPOTIFY_VALID_GENRES:
-        print(f"🎵 Genre valid: '{genre_clean}'")
-        return genre_clean
+    if not unique_genres:
+        unique_genres = ["pop"]  # Ultimate fallback
     
-    # Fallback: try to find a similar genre
-    for valid_genre in SPOTIFY_VALID_GENRES:
-        if genre_clean in valid_genre or valid_genre in genre_clean:
-            print(f"🎵 Genre fuzzy match: '{genre}' → '{valid_genre}'")
-            return valid_genre
-    
-    print(f"⚠️ Genre '{genre}' not found. Using 'pop' as fallback.")
-    return "pop"
+    print(f"🎵 Mapped genres: {genre_input} → {unique_genres}")
+    return unique_genres
 
 def get_artist_ids(artist_names, headers):
     """Get Spotify artist IDs from artist names"""
     artist_ids = []
     
-    for name in artist_names:
+    if not artist_names:
+        return artist_ids
+    
+    # Parse artist names if it's a string
+    if isinstance(artist_names, str):
+        names_list = [name.strip() for name in artist_names.split(",") if name.strip()]
+    else:
+        names_list = artist_names
+    
+    for name in names_list[:3]:  # Limit to 3 artists for better variety
         if not name or not name.strip():
             continue
             
@@ -207,98 +227,161 @@ def get_artist_ids(artist_names, headers):
     
     return artist_ids
 
-def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, 
-                               seed_tracks=None, mood_params=None):
-    """Try to use recommendations API with proper genre/artist IDs"""
+def remove_duplicates_and_filter(tracks, headers):
+    """Remove duplicate tracks and filter for quality"""
+    if not tracks:
+        return []
+    
+    # Get track details for filtering
+    track_ids = [uri.split(":")[-1] for uri in tracks]
+    unique_tracks = []
+    seen_artists = set()
+    seen_track_names = set()
+    
+    batch_size = 50
+    for i in range(0, len(track_ids), batch_size):
+        batch_ids = track_ids[i:i + batch_size]
+        
+        res = requests.get("https://api.spotify.com/v1/tracks", 
+                          headers=headers, 
+                          params={"ids": ",".join(batch_ids)})
+        
+        if res.status_code == 200:
+            batch_tracks = res.json().get("tracks", [])
+            
+            for j, track in enumerate(batch_tracks):
+                if not track:
+                    continue
+                
+                track_name = track.get("name", "").lower()
+                artist_name = track.get("artists", [{}])[0].get("name", "").lower()
+                original_uri = tracks[i + j]
+                
+                # Skip if we've seen this artist too many times (max 2 per artist)
+                artist_count = sum(1 for seen in seen_artists if seen == artist_name)
+                if artist_count >= 2:
+                    continue
+                
+                # Skip if we've seen this exact track name
+                if track_name in seen_track_names:
+                    continue
+                
+                # Skip if track is too short (less than 60 seconds)
+                duration_ms = track.get("duration_ms", 0)
+                if duration_ms < 60000:
+                    continue
+                
+                # Add track
+                unique_tracks.append(original_uri)
+                seen_artists.add(artist_name)
+                seen_track_names.add(track_name)
+    
+    print(f"🔍 Filtered tracks: {len(tracks)} → {len(unique_tracks)} (removed duplicates)")
+    return unique_tracks
+
+def get_recommendations_enhanced(headers, limit=25, seed_genres=None, seed_artists=None, 
+                               mood_params=None):
+    """Get recommendations with better genre handling"""
     rec_url = "https://api.spotify.com/v1/recommendations"
     
-    params = {"limit": limit}
+    params = {"limit": limit, "market": "US"}
     
-    # Add seeds (max 5 total)
+    # Add seeds (max 5 total, prioritize genres over artists)
     seeds_used = 0
+    
     if seed_genres and seeds_used < 5:
-        genres_to_use = seed_genres[:5-seeds_used]
+        # Use up to 3 genres
+        genres_to_use = seed_genres[:min(3, 5-seeds_used)]
         params["seed_genres"] = ",".join(genres_to_use)
         seeds_used += len(genres_to_use)
         print(f"🎵 Using genre seeds: {genres_to_use}")
     
     if seed_artists and seeds_used < 5:
+        # Use remaining slots for artists
         artists_to_use = seed_artists[:5-seeds_used]
         params["seed_artists"] = ",".join(artists_to_use)
         seeds_used += len(artists_to_use)
         print(f"🎤 Using artist seeds: {len(artists_to_use)} artists")
     
-    if seed_tracks and seeds_used < 5:
-        tracks_to_use = seed_tracks[:5-seeds_used]
-        params["seed_tracks"] = ",".join(tracks_to_use)
-        seeds_used += len(tracks_to_use)
-        print(f"🎶 Using track seeds: {len(tracks_to_use)} tracks")
-    
-    # Add mood parameters
+    # Add mood parameters for better targeting
     if mood_params:
-        params.update(mood_params)
-        print(f"😊 Using mood params: {mood_params}")
+        # Be more selective with mood parameters
+        filtered_params = {}
+        for key, value in mood_params.items():
+            if key.startswith('target_') or key.startswith('min_') or key.startswith('max_'):
+                filtered_params[key] = value
+        params.update(filtered_params)
+        print(f"😊 Using mood params: {filtered_params}")
     
     print(f"🎯 Recommendations API call with {seeds_used} seeds")
     res = requests.get(rec_url, headers=headers, params=params)
     
     if res.status_code == 200:
         tracks = res.json().get("tracks", [])
-        print(f"✅ Recommendations API: Got {len(tracks)} tracks")
-        return [track["uri"] for track in tracks]
+        track_uris = [track["uri"] for track in tracks]
+        print(f"✅ Recommendations API: Got {len(track_uris)} tracks")
+        return track_uris
     else:
-        print(f"❌ Recommendations API failed: {res.status_code}")
+        print(f"❌ Recommendations API failed: {res.status_code} - {res.text}")
         return []
 
-def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
+def search_spotify_tracks_enhanced(genre_input, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean", 
                                  artist_names=None):
-    """Enhanced search with proper genre mapping and artist IDs"""
+    """Enhanced search with better genre and duplicate handling"""
+    
+    # Parse and map genres
+    spotify_genres = parse_genre_list(genre_input)
     
     # Get artist IDs if provided
-    artist_ids = []
-    if artist_names:
-        artist_ids = get_artist_ids(artist_names, headers)
-    
-    # Map genre properly
-    spotify_genre = sanitize_genre(genre) if genre else None
+    artist_ids = get_artist_ids(artist_names, headers) if artist_names else []
     
     # Get mood parameters
     mood_params = get_enhanced_mood_values(mood_tags) if mood_tags else {}
     
-    # Try recommendations API first (better quality)
-    if spotify_genre or artist_ids:
-        print("🎯 Trying Recommendations API first...")
-        rec_tracks = get_recommendations_enhanced(
+    all_tracks = []
+    
+    # Strategy 1: Use Recommendations API with each genre separately
+    for genre in spotify_genres:
+        print(f"🔍 Getting recommendations for genre: {genre}")
+        tracks = get_recommendations_enhanced(
             headers=headers,
-            limit=limit,
-            seed_genres=[spotify_genre] if spotify_genre else [],
-            seed_artists=artist_ids[:3],  # Use up to 3 artists
+            limit=limit // len(spotify_genres) + 5,  # Get extra to account for filtering
+            seed_genres=[genre],
+            seed_artists=artist_ids[:2] if artist_ids else [],
             mood_params=mood_params
         )
-        
-        if rec_tracks:
-            # Filter for explicit content
-            filtered_tracks = filter_explicit_content(rec_tracks, headers, playlist_type)
-            if len(filtered_tracks) >= limit * 0.7:  # If we got 70% of what we need
-                print(f"✅ Recommendations API success: {len(filtered_tracks)} tracks")
-                return filtered_tracks[:limit]
+        all_tracks.extend(tracks)
     
-    # Fallback to search API
-    print("🔄 Falling back to Search API...")
-    return search_spotify_tracks_fallback(spotify_genre, headers, limit, mood_tags, 
-                                        search_keywords, playlist_type)
+    # Strategy 2: If we don't have enough tracks, try combined genre search
+    if len(all_tracks) < limit * 0.7:
+        print("🔄 Getting additional tracks with combined genres...")
+        additional_tracks = get_recommendations_enhanced(
+            headers=headers,
+            limit=limit,
+            seed_genres=spotify_genres[:2],  # Max 2 genres for combined search
+            seed_artists=artist_ids[:1] if artist_ids else [],
+            mood_params=mood_params
+        )
+        all_tracks.extend(additional_tracks)
+    
+    # Remove duplicates and filter for quality
+    filtered_tracks = remove_duplicates_and_filter(all_tracks, headers)
+    
+    # Filter for explicit content
+    final_tracks = filter_explicit_content(filtered_tracks, headers, playlist_type)
+    
+    print(f"✅ Final track count: {len(final_tracks)}")
+    return final_tracks[:limit]
 
 def filter_explicit_content(track_uris, headers, playlist_type):
     """Filter tracks based on explicit content preference"""
     if not track_uris or playlist_type.lower() == "any":
         return track_uris
     
-    # Get track details
     track_ids = [uri.split(":")[-1] for uri in track_uris]
-    
     filtered_uris = []
-    batch_size = 50  # Spotify API limit
+    batch_size = 50
     
     for i in range(0, len(track_ids), batch_size):
         batch_ids = track_ids[i:i + batch_size]
@@ -311,7 +394,7 @@ def filter_explicit_content(track_uris, headers, playlist_type):
             tracks = res.json().get("tracks", [])
             
             for j, track in enumerate(tracks):
-                if track:  # Some tracks might be None
+                if track:
                     is_explicit = track.get("explicit", False)
                     original_uri = track_uris[i + j]
                     
@@ -320,109 +403,13 @@ def filter_explicit_content(track_uris, headers, playlist_type):
                     elif playlist_type.lower() == "explicit" and is_explicit:
                         filtered_uris.append(original_uri)
     
-    print(f"🔍 Filtered {len(track_uris)} → {len(filtered_uris)} tracks for {playlist_type}")
+    print(f"🔍 Content filter: {len(track_uris)} → {len(filtered_uris)} tracks ({playlist_type})")
     return filtered_uris
-
-def search_spotify_tracks_fallback(genre, headers, limit=20, mood_tags=None, 
-                                 search_keywords=None, playlist_type="clean"):
-    """Fallback search using text-based queries"""
-    search_url = "https://api.spotify.com/v1/search"
-    
-    # Build search queries
-    search_queries = []
-    
-    if genre:
-        search_queries.append(f"genre:{genre}")
-    
-    if mood_tags:
-        mood_terms = get_mood_search_terms(mood_tags)
-        for term in mood_terms[:2]:
-            if genre:
-                search_queries.append(f"genre:{genre} {term}")
-            else:
-                search_queries.append(term)
-    
-    if search_keywords:
-        keywords = search_keywords.split()
-        for keyword in keywords[:2]:
-            if genre:
-                search_queries.append(f"genre:{genre} {keyword}")
-            else:
-                search_queries.append(keyword)
-    
-    if not search_queries:
-        search_queries = ["popular music", "trending"]
-    
-    print(f"🔍 Fallback search queries: {search_queries}")
-    
-    all_tracks = []
-    tracks_per_query = max(1, limit // len(search_queries))
-    
-    for query in search_queries:
-        if len(all_tracks) >= limit:
-            break
-            
-        params = {
-            "q": query,
-            "type": "track",
-            "limit": min(tracks_per_query + 10, 50),
-            "market": "US"
-        }
-        
-        res = requests.get(search_url, headers=headers, params=params)
-        
-        if res.status_code == 200:
-            data = res.json()
-            tracks = data.get("tracks", {}).get("items", [])
-            
-            for track in tracks:
-                if len(all_tracks) >= limit:
-                    break
-                    
-                is_explicit = track.get("explicit", False)
-                
-                # Filter by explicit content
-                if playlist_type.lower() == "clean" and is_explicit:
-                    continue
-                elif playlist_type.lower() == "explicit" and not is_explicit:
-                    continue
-                
-                track_uri = track.get("uri")
-                if track_uri and track_uri not in [t["uri"] for t in all_tracks]:
-                    all_tracks.append({
-                        "uri": track_uri,
-                        "name": track.get("name"),
-                        "artist": track.get("artists", [{}])[0].get("name", "Unknown"),
-                        "popularity": track.get("popularity", 0),
-                        "explicit": is_explicit
-                    })
-    
-    # Sort by popularity
-    all_tracks.sort(key=lambda x: x["popularity"], reverse=True)
-    track_uris = [track["uri"] for track in all_tracks[:limit]]
-    
-    print(f"✅ Fallback search: Found {len(track_uris)} tracks")
-    return track_uris
-
-def get_mood_search_terms(mood):
-    """Get search terms for different moods"""
-    mood_terms = {
-        "happy": ["upbeat", "cheerful", "joyful", "celebration", "positive"],
-        "chill": ["chill", "relaxing", "calm", "peaceful", "mellow"],
-        "upbeat": ["energetic", "upbeat", "pump up", "high energy", "motivational"],
-        "focus": ["focus", "concentration", "study", "instrumental", "ambient"],
-        "party": ["party", "dance", "club", "celebration", "fun"],
-        "hype": ["hype", "pump up", "energy", "motivation", "intense"],
-        "melancholy": ["sad", "emotional", "melancholy", "slow", "reflective"],
-        "workout": ["workout", "gym", "fitness", "training", "exercise"],
-        "romantic": ["love", "romantic", "intimate", "sweet", "tender"]
-    }
-    return mood_terms.get(mood.lower(), ["music"])
 
 def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords, 
                                 artist_names=None, user_preferences=None, playlist_type="clean"):
-    """Enhanced playlist builder with proper genre/artist matching"""
-    track_limit = max(5, int(time) // 4) if time else 15
+    """Enhanced playlist builder with better filtering and no duplicates"""
+    track_limit = max(10, int(time) // 3) if time else 20  # Slightly more tracks for better variety
     access_token = refresh_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -433,36 +420,28 @@ def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords
         return None
     
     print(f"🎵 Building enhanced playlist: {event}")
-    print(f"🎯 Genre: {genre}")
+    print(f"🎯 Genres: {genre}")
     print(f"😊 Mood: {mood_tags}")
     print(f"🔍 Keywords: {search_keywords}")
     print(f"🎤 Artists: {artist_names}")
-    print(f"📊 Track limit: {track_limit}")
+    print(f"📊 Target tracks: {track_limit}")
     print(f"🎯 Content filter: {playlist_type}")
 
-    # Parse artist names
-    artists_list = []
-    if artist_names:
-        if isinstance(artist_names, str):
-            artists_list = [name.strip() for name in artist_names.split(",") if name.strip()]
-        elif isinstance(artist_names, list):
-            artists_list = artist_names
-
     track_uris = search_spotify_tracks_enhanced(
-        genre=genre,
+        genre_input=genre,
         headers=headers,
         limit=track_limit,
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        artist_names=artists_list
+        artist_names=artist_names
     )
 
     if not track_uris:
         print("❌ No tracks found after enhanced search.")
         return None
 
-    playlist_name = f"{event} - {genre or 'Mixed'} [{playlist_type}]"
+    playlist_name = f"{event} - {mood_tags or 'Mixed'} [{playlist_type}]"
     playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
     if not playlist_id:
         return None
@@ -479,12 +458,12 @@ if __name__ == "__main__":
     print("🧪 Testing enhanced playlist creation...")
     
     result = build_smart_playlist_enhanced(
-        event="Test Enhanced Workout",
-        genre="grunge",  # Test the newly supported genre
-        time="45",
-        mood_tags="hype",
-        search_keywords="pump up energy",
-        artist_names=["Nirvana", "Pearl Jam"],  # Test artist ID lookup
+        event="Tuesday Workday Reset",
+        genre="pop,rock,hip-hop,indie,r-n-b",  # Test multi-genre
+        time="60",
+        mood_tags="Upbeat",
+        search_keywords="energy motivation",
+        artist_names="Taylor Swift, Kendrick Lamar",
         playlist_type="clean"
     )
     
