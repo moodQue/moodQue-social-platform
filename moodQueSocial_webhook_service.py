@@ -300,74 +300,66 @@ def home():
 
 @app.route("/glide-webhook", methods=["POST"])
 def create_playlist_from_glide():
-    """Enhanced playlist creation with better error handling"""
+    """Enhanced playlist creation with normalized key support"""
     try:
         data = request.get_json()
-        
-        # 🔍 DEBUG: Print exactly what we received from Glide
+
+        # 🔄 Normalize incoming keys to lowercase and underscores
+        data = {k.strip().lower().replace(" ", "_"): v for k, v in data.items()}
+
+        # 🔍 DEBUG: Print normalized data
         print("=" * 50)
-        print("🔍 DEBUG - Raw form data received:")
+        print("✅ Normalized form data:")
         print(json.dumps(data, indent=2))
         print("=" * 50)
-        
+
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
-        
-        # Ensure social sheets exist
+
+        # Ensure sheets are ready
         ensure_social_sheets()
-        
-        # Extract form data
-        event = data.get('Event')
-        genre = data.get('Genre')
-        time = data.get('Time')
-        mood_tags = data.get('Mood Tags')
-        search_keywords = data.get('Search Keywords', '')
-        fallback_artist = data.get('Fallback Artist', '')
-        playlist_type = data.get('Playlist Type', 'clean')
-        
-        # Extract user data with fallbacks
-        user_email = data.get('User Email', 'anonymous@example.com')
-        user_name = data.get('User Name', '')
-        
-        # If no user name provided, create one from email
+
+        # Extract values
+        event = data.get('event')
+        genre = data.get('genre')
+        time = data.get('time')
+        mood_tags = data.get('mood_tags')
+        search_keywords = data.get('search_keywords', '')
+        fallback_artist = data.get('fallback_artist', '')
+        playlist_type = data.get('playlist_type', 'clean')
+
+        user_email = data.get('user_email', 'anonymous@example.com')
+        user_name = data.get('user_name', '')
+
         if not user_name or user_name.strip() == "":
-            user_name = user_email.split('@')[0].title()  # Use email prefix
+            user_name = user_email.split('@')[0].title()
             print(f"⚠️ No User Name in form data, using fallback: {user_name}")
-        
-        # 🔍 DEBUG: Print extracted values
-        print(f"🔍 Extracted - Event: '{event}'")
-        print(f"🔍 Extracted - Genre: '{genre}'")
-        print(f"🔍 Extracted - User: '{user_name}' ({user_email})")
-        print(f"🔍 Extracted - Duration: '{time}'")
-        print(f"🔍 Extracted - Mood: '{mood_tags}'")
-        print(f"🔍 Extracted - Keywords: '{search_keywords}'")
-        
-        print(f"🎵 Creating playlist for {user_name} ({user_email}): {event}")
-        
-        # Update user's current mood (with better error handling)
+
+        print(f"🎵 Building playlist for {user_name} ({user_email})")
+        print(f"🎯 Event: {event}, Genre: {genre}, Mood: {mood_tags}, Duration: {time}")
+
+        # Update user mood
         try:
             update_user_profile(user_email, user_name, {'current_mood': mood_tags})
         except Exception as profile_error:
-            print(f"⚠️ Warning: Could not update user profile: {profile_error}")
-            # Continue with playlist creation even if profile update fails
-        
-        artist_names = fallback_artist
+            print(f"⚠️ Could not update profile: {profile_error}")
+
+        # Combine keywords
         combined_keywords = search_keywords or fallback_artist or event
-        
-        # Generate the playlist
+
+        # Create playlist
         playlist_url = build_smart_playlist_enhanced(
             event=event,
             genre=genre or "any",
             time=time,
             mood_tags=mood_tags,
             search_keywords=combined_keywords,
-            artist_names=artist_names,
+            artist_names=fallback_artist,
             user_preferences=None,
             playlist_type=playlist_type
         )
-        
+
         if playlist_url:
-            # Save to social feed
             playlist_data = {
                 'user_email': user_email,
                 'user_name': user_name,
@@ -380,21 +372,20 @@ def create_playlist_from_glide():
                 'time': time,
                 'track_count': max(5, int(time) // 4) if time else 15
             }
-            
+
             try:
                 playlist_id = save_social_playlist(playlist_data, playlist_url)
-                
-                # Log playlist creation
+
                 log_interaction(user_email, playlist_id, "playlist_created", {
                     'event': event,
                     'genre': genre,
                     'mood': mood_tags
                 })
             except Exception as social_error:
-                print(f"⚠️ Warning: Could not save to social feed: {social_error}")
-                playlist_id = "temp_id"  # Provide fallback ID
-            
-            response_data = {
+                print(f"⚠️ Could not save to social feed: {social_error}")
+                playlist_id = "temp_id"
+
+            return jsonify({
                 "status": "success",
                 "playlist_url": playlist_url,
                 "playlist_id": playlist_id,
@@ -406,21 +397,19 @@ def create_playlist_from_glide():
                     "mood": mood_tags,
                     "genre": genre or "Mixed"
                 }
-            }
-            
-            print(f"✅ Playlist created successfully: {playlist_id}")
-            return jsonify(response_data), 200
+            }), 200
         else:
             return jsonify({
                 "status": "error",
                 "message": "Failed to create playlist. Please try again."
             }), 500
-            
+
     except Exception as e:
         print(f"❌ Error in playlist creation: {e}")
         import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
+        print(traceback.format_exc())
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route("/social/like-playlist", methods=["POST"])
 def like_playlist():
