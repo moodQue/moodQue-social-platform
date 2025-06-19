@@ -737,6 +737,187 @@ def test_endpoint():
             "error": str(e)
         }), 200
 
+# Add this endpoint to your moodQueSocial_webhook_service.py file
+
+@app.route("/glide/sync-clean-data", methods=["POST"])
+def sync_clean_data_to_glide():
+    """
+    Receive clean playlist data from Google Sheets and format for Glide
+    This replaces the messy data with clean, complete playlists
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"status": "error", "message": "No data received"}), 400
+        
+        playlists = data.get('playlists', [])
+        total_count = data.get('total_count', 0)
+        metadata = data.get('metadata', {})
+        
+        print(f"🧹 Received clean data sync request: {total_count} playlists")
+        print(f"📊 Metadata: {metadata}")
+        
+        # Process the clean data
+        processed_playlists = []
+        spotify_codes_count = 0
+        
+        for playlist in playlists:
+            # Ensure all required fields are present for Glide
+            clean_playlist = {
+                # Core playlist info
+                'playlist_id': playlist.get('Playlist ID', ''),
+                'creator_email': playlist.get('Creator Email', ''),
+                'creator_name': playlist.get('Creator Name', ''),
+                'event_name': playlist.get('Event Name', ''),
+                'genre': playlist.get('Genre', ''),
+                'mood': playlist.get('Mood', ''),
+                'spotify_url': playlist.get('Spotify URL', ''),
+                'created_date': playlist.get('Created Date', ''),
+                'description': playlist.get('Description', ''),
+                
+                # Social features
+                'likes_count': int(playlist.get('likes_count_number', 0)),
+                'views_count': int(playlist.get('views_count_number', 0)),
+                'shares_count': int(playlist.get('shares_count_number', 0)),
+                
+                # Spotify code info
+                'spotify_code_url': playlist.get('Spotify Code URL', ''),
+                'has_spotify_code': playlist.get('has_spotify_code_boolean', False),
+                'code_generated': playlist.get('Code Generated', ''),
+                'code_format': playlist.get('Code Format', 'png'),
+                
+                # Boolean flags
+                'is_public': playlist.get('is_public_boolean', True),
+                'is_trending': playlist.get('is_trending_boolean', False),
+                'featured': playlist.get('featured_boolean', False),
+                
+                # Additional fields
+                'track_count': int(playlist.get('track_count_number', 0)),
+                'duration': playlist.get('Duration', ''),
+                'playlist_type': playlist.get('Playlist Type', 'clean'),
+                'tags': playlist.get('Tags', ''),
+                
+                # Computed fields for Glide
+                'popularity_score': playlist.get('popularity_score', 0),
+                'has_code_text': 'Yes' if playlist.get('has_spotify_code_boolean', False) else 'No',
+                'duration_text': f"{playlist.get('Duration', '')} min" if playlist.get('Duration') else '',
+                'engagement_score': int(playlist.get('likes_count_number', 0)) + int(playlist.get('views_count_number', 0)) * 0.1,
+                
+                # Timestamps
+                'last_updated': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'sync_timestamp': data.get('timestamp', datetime.datetime.now().isoformat())
+            }
+            
+            if clean_playlist['has_spotify_code']:
+                spotify_codes_count += 1
+            
+            processed_playlists.append(clean_playlist)
+        
+        # Update Google Sheets with the clean data (write back)
+        try:
+            client = get_sheets_client()
+            spreadsheet = client.open("Playlist App Data")
+            
+            # Create or update a "Clean Playlists for Glide" sheet
+            try:
+                glide_sheet = spreadsheet.worksheet("Clean Playlists for Glide")
+                # Clear existing data
+                glide_sheet.clear()
+            except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
+                glide_sheet = spreadsheet.add_worksheet(title="Clean Playlists for Glide", rows="2000", cols="30")
+            
+            # Prepare headers and data for Glide sheet
+            if processed_playlists:
+                glide_headers = list(processed_playlists[0].keys())
+                glide_data = [glide_headers]
+                
+                for playlist in processed_playlists:
+                    row = [playlist.get(header, '') for header in glide_headers]
+                    glide_data.append(row)
+                
+                # Write to sheet
+                glide_sheet.update(f"A1:{chr(65 + len(glide_headers) - 1)}{len(glide_data)}", glide_data)
+                print(f"✅ Updated 'Clean Playlists for Glide' sheet with {len(processed_playlists)} rows")
+        
+        except Exception as sheet_error:
+            print(f"⚠️ Could not update Glide sheet: {sheet_error}")
+            # Continue anyway - the data is still processed
+        
+        # Log the sync
+        log_interaction('system', 'glide_sync', 'clean_data_sync', {
+            'total_playlists': total_count,
+            'spotify_codes': spotify_codes_count,
+            'timestamp': data.get('timestamp')
+        })
+        
+        response_data = {
+            "status": "success",
+            "message": f"✅ Clean data sync complete! Processed {total_count} playlists",
+            "processed_count": len(processed_playlists),
+            "spotify_codes_count": spotify_codes_count,
+            "glide_ready": True,
+            "clean_data_available": True,
+            "sheet_name": "Clean Playlists for Glide",
+            "metadata": {
+                "sync_timestamp": datetime.datetime.now().isoformat(),
+                "source": "google_sheets_cleanup",
+                "has_spotify_codes": spotify_codes_count > 0
+            }
+        }
+        
+        print(f"🎉 Clean data sync successful: {len(processed_playlists)} playlists ready for Glide")
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        print(f"❌ Error in clean data sync: {e}")
+        return jsonify({
+            "status": "error", 
+            "message": f"Clean data sync failed: {str(e)}"
+        }), 500
+
+@app.route("/glide/get-clean-data", methods=["GET"])
+def get_clean_data_for_glide():
+    """
+    Endpoint for Glide to fetch clean playlist data
+    Use this URL as your data source in Glide
+    """
+    try:
+        client = get_sheets_client()
+        spreadsheet = client.open("Playlist App Data")
+        
+        try:
+            glide_sheet = spreadsheet.worksheet("Clean Playlists for Glide")
+            all_data = glide_sheet.get_all_records()
+            
+            # Sort by creation date (most recent first)
+            sorted_data = sorted(all_data, 
+                               key=lambda x: x.get('created_date', ''), 
+                               reverse=True)
+            
+            return jsonify({
+                "status": "success",
+                "playlists": sorted_data,
+                "count": len(sorted_data),
+                "last_updated": datetime.datetime.now().isoformat(),
+                "has_spotify_codes": True
+            }), 200
+            
+        except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
+            return jsonify({
+                "status": "error",
+                "message": "Clean data not available. Run cleanup first.",
+                "playlists": [],
+                "count": 0
+            }), 404
+            
+    except Exception as e:
+        print(f"❌ Error getting clean data: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+        
 if __name__ == "__main__":
     print("🚀 Starting MoodQue Social Music Platform with Spotify Codes...")
     print("🎵 Version 2.0 - Spotify Codes Edition")
