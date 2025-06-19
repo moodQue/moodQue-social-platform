@@ -4,7 +4,6 @@ import os
 import datetime
 import uuid
 import json
-from urllib.parse import quote
 sys.path.append(os.path.join(os.path.dirname(__file__), "python"))
 
 import gspread
@@ -16,17 +15,16 @@ from SpotifyPlaylistBuilder import (
     refresh_access_token
 )
 
-# Import the new Spotify code generator
-from spotify_code_generator import SpotifyCodeGenerator
-
 app = Flask(__name__)
 
 # Setup Google Sheets API credentials
 def get_google_credentials():
     """Get Google credentials from environment variable or file"""
+    # Try to get credentials from environment variable first
     creds_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT_JSON')
     
     if creds_json:
+        # Parse JSON from environment variable
         try:
             creds_dict = json.loads(creds_json)
             return Credentials.from_service_account_info(creds_dict, scopes=[
@@ -37,6 +35,7 @@ def get_google_credentials():
             print(f"❌ Error parsing Google credentials from environment: {e}")
             return None
     else:
+        # Fallback to local file for development
         SERVICE_ACCOUNT_FILE = "moodQue-automation-437f1e4eaa49.json"
         if os.path.exists(SERVICE_ACCOUNT_FILE):
             return Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=[
@@ -44,7 +43,7 @@ def get_google_credentials():
                 "https://www.googleapis.com/auth/drive"
             ])
         else:
-            print(f"❌ No Google credentials found.")
+            print(f"❌ No Google credentials found. Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable or place {SERVICE_ACCOUNT_FILE} in project directory.")
             return None
 
 def get_sheets_client():
@@ -56,7 +55,7 @@ def get_sheets_client():
         raise Exception("Failed to get Google credentials")
 
 def ensure_social_sheets():
-    """Create social feature sheets if they don't exist - Updated with Spotify code columns"""
+    """Create social feature sheets if they don't exist"""
     try:
         client = get_sheets_client()
         spreadsheet = client.open("Playlist App Data")
@@ -74,23 +73,17 @@ def ensure_social_sheets():
             ]
             user_sheet.append_row(headers)
         
-        # Ensure Social Playlists sheet exists - UPDATED with Spotify code columns
+        # Ensure Social Playlists sheet exists
         try:
-            social_sheet = spreadsheet.worksheet("Social Playlists")
-            # Check if it has the new columns
-            headers = social_sheet.row_values(1)
-            if "Spotify Code URL" not in headers:
-                print("⚠️ Social Playlists sheet exists but missing Spotify code columns")
-                print("   Please run update_sheets.py first!")
+            spreadsheet.worksheet("Social Playlists")
         except (gspread.WorksheetNotFound, gspread.exceptions.WorksheetNotFound):
-            social_sheet = spreadsheet.add_worksheet(title="Social Playlists", rows="2000", cols="25")
+            social_sheet = spreadsheet.add_worksheet(title="Social Playlists", rows="2000", cols="20")
             headers = [
                 "Playlist ID", "Creator Email", "Creator Name", "Event Name",
-                "Genre", "Mood", "Search Keywords", "Spotify URL", "Created Date", 
-                "Likes Count", "Views Count", "Shares Count", "Tags", "Description", 
+                "Genre", "Mood", "Search Keywords", "Spotify URL", "Created Date", "Likes Count",
+                "Views Count", "Shares Count", "Tags", "Description", 
                 "Track Count", "Duration", "Is Public", "Is Trending",
-                "Last Liked", "Featured", "Playlist Type", "Spotify Code URL", 
-                "Has Code", "Code Generated", "Code Format"
+                "Last Liked", "Featured", "Playlist Type"
             ]
             social_sheet.append_row(headers)
         
@@ -112,57 +105,103 @@ def ensure_social_sheets():
         return False
 
 def update_user_profile(user_email, user_name, updates):
-    """Update or create user profile"""
+    """Update or create user profile - FIXED VERSION"""
     try:
         client = get_sheets_client()
         spreadsheet = client.open("Playlist App Data")
         user_sheet = spreadsheet.worksheet("User Profiles")
         
+        # Handle empty user_name
+        if not user_name or user_name.strip() == "":
+            user_name = user_email.split('@')[0]  # Use email prefix as fallback
+            print(f"⚠️ No user name provided, using fallback: {user_name}")
+        
+        # Find existing user - MORE ROBUST APPROACH
         try:
-            cell = user_sheet.find(user_email)
-            row_num = cell.row
-            print(f"✅ Found existing user: {user_email} at row {row_num}")
+            all_records = user_sheet.get_all_records()
+            existing_user_row = None
+            row_num = None
             
-            user_sheet.update(f"B{row_num}", user_name)
-            user_sheet.update(f"D{row_num}", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            # Search for user in all records
+            for i, record in enumerate(all_records, start=2):  # Start at row 2 (after header)
+                if record.get('User Email', '').strip().lower() == user_email.strip().lower():
+                    existing_user_row = record
+                    row_num = i
+                    break
             
-            if 'current_mood' in updates:
-                user_sheet.update(f"C{row_num}", updates['current_mood'])
-            if 'total_playlists' in updates:
-                if updates['total_playlists'] == '+1':
-                    current_val = user_sheet.acell(f"E{row_num}").value
-                    new_val = int(current_val or 0) + 1
-                    user_sheet.update(f"E{row_num}", new_val)
-                else:
-                    user_sheet.update(f"E{row_num}", updates['total_playlists'])
-            if 'total_likes_received' in updates:
-                if updates['total_likes_received'] == '+1':
-                    current_val = user_sheet.acell(f"F{row_num}").value
-                    new_val = int(current_val or 0) + 1
-                    user_sheet.update(f"F{row_num}", new_val)
-                else:
-                    user_sheet.update(f"F{row_num}", updates['total_likes_received'])
-            
-        except Exception as e:
-            error_str = str(e).lower()
-            if "not found" in error_str or "unable to find" in error_str:
+            if existing_user_row and row_num:
+                print(f"✅ Found existing user: {user_email} at row {row_num}")
+                
+                # Update existing user
+                user_sheet.update(f"B{row_num}", user_name)  # Update name
+                user_sheet.update(f"D{row_num}", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Last active
+                
+                # Update specific fields
+                if 'current_mood' in updates:
+                    user_sheet.update(f"C{row_num}", updates['current_mood'])
+                if 'total_playlists' in updates:
+                    # Handle increment notation
+                    if updates['total_playlists'] == '+1':
+                        current_val = existing_user_row.get('Total Playlists', 0)
+                        new_val = int(current_val or 0) + 1
+                        user_sheet.update(f"E{row_num}", new_val)
+                    else:
+                        user_sheet.update(f"E{row_num}", updates['total_playlists'])
+                if 'total_likes_received' in updates:
+                    if updates['total_likes_received'] == '+1':
+                        current_val = existing_user_row.get('Total Likes Received', 0)
+                        new_val = int(current_val or 0) + 1
+                        user_sheet.update(f"F{row_num}", new_val)
+                    else:
+                        user_sheet.update(f"F{row_num}", updates['total_likes_received'])
+                
+                print(f"✅ Updated user profile for: {user_email}")
+            else:
+                # User not found - create new user
                 print(f"👤 Creating new user profile for: {user_email}")
                 new_user_row = [
-                    user_email, user_name, updates.get('current_mood', ''),
-                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    updates.get('total_playlists', 0),
+                    user_email, 
+                    user_name, 
+                    updates.get('current_mood', ''),
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Last active
+                    1 if updates.get('total_playlists') == '+1' else updates.get('total_playlists', 0),
                     updates.get('total_likes_received', 0),
                     updates.get('total_likes_given', 0),
                     updates.get('favorite_genre', ''),
                     updates.get('favorite_mood', ''),
-                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    0, '', updates.get('bio', ''), updates.get('avatar', ''), 'active'
+                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Profile created
+                    0,  # Streak days
+                    '',  # Last streak date
+                    updates.get('bio', ''),
+                    updates.get('avatar', ''),
+                    'active'
                 ]
                 user_sheet.append_row(new_user_row)
                 print(f"✅ Created new user profile for: {user_email}")
-            else:
-                print(f"❌ Unexpected error finding user {user_email}: {e}")
-                raise e
+        
+        except Exception as search_error:
+            print(f"❌ Error during user search/update: {search_error}")
+            # Create new user as fallback
+            print(f"🔄 Creating new user as fallback for: {user_email}")
+            new_user_row = [
+                user_email, 
+                user_name, 
+                updates.get('current_mood', ''),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Last active
+                1 if updates.get('total_playlists') == '+1' else updates.get('total_playlists', 0),
+                updates.get('total_likes_received', 0),
+                updates.get('total_likes_given', 0),
+                updates.get('favorite_genre', ''),
+                updates.get('favorite_mood', ''),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Profile created
+                0,  # Streak days
+                '',  # Last streak date
+                updates.get('bio', ''),
+                updates.get('avatar', ''),
+                'active'
+            ]
+            user_sheet.append_row(new_user_row)
+            print(f"✅ Created new user profile (fallback) for: {user_email}")
         
         return True
     except Exception as e:
@@ -170,36 +209,14 @@ def update_user_profile(user_email, user_name, updates):
         return False
 
 def save_social_playlist(playlist_data, playlist_url):
-    """Save playlist to social feed - UPDATED with Spotify code generation"""
+    """Save playlist to social feed"""
     try:
         client = get_sheets_client()
         spreadsheet = client.open("Playlist App Data")
         social_sheet = spreadsheet.worksheet("Social Playlists")
         
-        playlist_id = str(uuid.uuid4())[:8]
+        playlist_id = str(uuid.uuid4())[:8]  # Short unique ID
         
-        # Generate Spotify code
-        code_gen = SpotifyCodeGenerator()
-        code_data = code_gen.generate_spotify_code(playlist_url)
-        
-        code_url = ""
-        has_code = False
-        code_generated = ""
-        code_format = ""
-        
-        if code_data:
-            code_url = code_data["code_url"]
-            has_code = True
-            code_generated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            code_format = code_data["format"]
-            print(f"✅ Generated Spotify code for playlist {playlist_id}")
-        else:
-            print(f"⚠️ Failed to generate Spotify code for playlist {playlist_id}")
-        
-        # Get current headers to find column positions
-        headers = social_sheet.row_values(1)
-        
-        # Build the row data - handling both old and new sheet structures
         social_row = [
             playlist_id,                    # A: Playlist ID
             playlist_data.get('user_email', ''),  # B: Creator Email
@@ -213,7 +230,7 @@ def save_social_playlist(playlist_data, playlist_url):
             0,  # J: Likes count
             0,  # K: Views count
             0,  # L: Shares count
-            f"{playlist_data.get('fallback_artist', '')}",  # M: Tags
+            f"{playlist_data.get('fallback_artist', '')}",  # M: Tags (simplified)
             f"A {playlist_data.get('mood_tags', '')} {playlist_data.get('genre', '')} playlist for {playlist_data.get('event', '')}",  # N: Description
             playlist_data.get('track_count', 15),  # O: Track Count
             playlist_data.get('time', ''),         # P: Duration
@@ -224,22 +241,13 @@ def save_social_playlist(playlist_data, playlist_url):
             playlist_data.get('playlist_type', 'clean')  # U: Playlist Type
         ]
         
-        # Add Spotify code columns if they exist
-        if "Spotify Code URL" in headers:
-            social_row.extend([
-                code_url,      # V: Spotify Code URL
-                has_code,      # W: Has Code
-                code_generated, # X: Code Generated
-                code_format    # Y: Code Format
-            ])
-        
         social_sheet.append_row(social_row)
         
         # Update user's playlist count
         update_user_profile(
             playlist_data.get('user_email', ''),
             playlist_data.get('user_name', ''),
-            {'total_playlists': '+1'}
+            {'total_playlists': '+1'}  # Increment
         )
         
         return playlist_id
@@ -255,8 +263,10 @@ def log_interaction(user_email, playlist_id, interaction_type, additional_data=N
         interactions_sheet = spreadsheet.worksheet("Social Interactions")
         
         interaction_row = [
-            str(uuid.uuid4())[:12],
-            user_email, playlist_id, interaction_type,
+            str(uuid.uuid4())[:12],  # Interaction ID
+            user_email,
+            playlist_id,
+            interaction_type,
             datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             str(additional_data) if additional_data else '',
             request.remote_addr if request else '',
@@ -271,77 +281,85 @@ def log_interaction(user_email, playlist_id, interaction_type, additional_data=N
         print(f"❌ Error logging interaction: {e}")
         return False
 
-# Root route
+# Add a simple root route to handle the 404 error
 @app.route("/", methods=["GET", "POST"])
 def home():
     """Root endpoint to confirm the service is running"""
     return jsonify({
-        "status": "MoodQue Social Music Platform with Spotify Codes is running!",
-        "version": "2.0 - Spotify Codes Edition",
+        "status": "MoodQue Social Music Platform is running!",
         "endpoints": {
             "create_playlist": "/glide-webhook",
             "social_feed": "/social/feed",
-            "social_feed_with_codes": "/social/feed-with-codes",
             "leaderboard": "/social/leaderboard",
             "like_playlist": "/social/like-playlist",
             "mood_status": "/social/mood-status",
-            "generate_spotify_code": "/spotify/generate-code",
-            "playlist_with_code": "/spotify/playlist-with-code/<playlist_id>",
             "test": "/test"
         },
-        "features": ["Playlist Creation", "Social Feed", "Spotify Codes", "Leaderboards"],
         "timestamp": str(datetime.datetime.now())
     }), 200
 
 @app.route("/glide-webhook", methods=["POST"])
 def create_playlist_from_glide():
-    """Enhanced playlist creation with social features and Spotify codes"""
+    """Enhanced playlist creation with normalized key support"""
     try:
         data = request.get_json()
-        
+
+        # 🔄 Normalize incoming keys to lowercase and underscores
+        data = {k.strip().lower().replace(" ", "_"): v for k, v in data.items()}
+
+        # 🔍 DEBUG: Print normalized data
         print("=" * 50)
-        print("🔍 DEBUG - Raw form data received:")
+        print("✅ Normalized form data:")
         print(json.dumps(data, indent=2))
         print("=" * 50)
-        
+
         if not data:
             return jsonify({"status": "error", "message": "No data received"}), 400
-        
+
+        # Ensure sheets are ready
         ensure_social_sheets()
-        
-        # Extract form data
-        event = data.get('Event')
-        genre = data.get('Genre')
-        time = data.get('Time')
-        mood_tags = data.get('Mood Tags')
-        search_keywords = data.get('Search Keywords', '')
-        fallback_artist = data.get('Fallback Artist', '')
-        playlist_type = data.get('Playlist Type', 'clean')
-        user_email = data.get('User Email', 'anonymous')
-        user_name = data.get('User Name', 'Anonymous User')
-        
-        print(f"🎵 Creating playlist for {user_name} ({user_email}): {event}")
-        
-        # Update user's current mood
-        update_user_profile(user_email, user_name, {'current_mood': mood_tags})
-        
-        artist_names = fallback_artist
+
+        # Extract values
+        event = data.get('event')
+        genre = data.get('genre')
+        time = data.get('time')
+        mood_tags = data.get('mood_tags')
+        search_keywords = data.get('search_keywords', '')
+        fallback_artist = data.get('fallback_artist', '')
+        playlist_type = data.get('playlist_type', 'clean')
+
+        user_email = data.get('user_email', 'anonymous@example.com')
+        user_name = data.get('user_name', '')
+
+        if not user_name or user_name.strip() == "":
+            user_name = user_email.split('@')[0].title()
+            print(f"⚠️ No User Name in form data, using fallback: {user_name}")
+
+        print(f"🎵 Building playlist for {user_name} ({user_email})")
+        print(f"🎯 Event: {event}, Genre: {genre}, Mood: {mood_tags}, Duration: {time}")
+
+        # Update user mood
+        try:
+            update_user_profile(user_email, user_name, {'current_mood': mood_tags})
+        except Exception as profile_error:
+            print(f"⚠️ Could not update profile: {profile_error}")
+
+        # Combine keywords
         combined_keywords = search_keywords or fallback_artist or event
-        
-        # Generate the playlist
+
+        # Create playlist
         playlist_url = build_smart_playlist_enhanced(
             event=event,
             genre=genre or "any",
             time=time,
             mood_tags=mood_tags,
             search_keywords=combined_keywords,
-            artist_names=artist_names,
+            artist_names=fallback_artist,
             user_preferences=None,
             playlist_type=playlist_type
         )
-        
+
         if playlist_url:
-            # Save to social feed (now includes Spotify code generation)
             playlist_data = {
                 'user_email': user_email,
                 'user_name': user_name,
@@ -354,23 +372,24 @@ def create_playlist_from_glide():
                 'time': time,
                 'track_count': max(5, int(time) // 4) if time else 15
             }
-            
-            playlist_id = save_social_playlist(playlist_data, playlist_url)
-            
-            # Generate Spotify code for response
-            code_gen = SpotifyCodeGenerator()
-            code_data = code_gen.generate_spotify_code(playlist_url)
-            
-            # Log playlist creation
-            log_interaction(user_email, playlist_id, "playlist_created", {
-                'event': event, 'genre': genre, 'mood': mood_tags
-            })
-            
-            response_data = {
+
+            try:
+                playlist_id = save_social_playlist(playlist_data, playlist_url)
+
+                log_interaction(user_email, playlist_id, "playlist_created", {
+                    'event': event,
+                    'genre': genre,
+                    'mood': mood_tags
+                })
+            except Exception as social_error:
+                print(f"⚠️ Could not save to social feed: {social_error}")
+                playlist_id = "temp_id"
+
+            return jsonify({
                 "status": "success",
                 "playlist_url": playlist_url,
                 "playlist_id": playlist_id,
-                "message": f"✅ '{event}' playlist shared to MoodQue community!",
+                "message": f"✅ '{event}' playlist created for {user_name}!",
                 "social_features": {
                     "can_like": True,
                     "can_share": True,
@@ -378,144 +397,19 @@ def create_playlist_from_glide():
                     "mood": mood_tags,
                     "genre": genre or "Mixed"
                 }
-            }
-            
-            # Add Spotify code to response if generated
-            if code_data:
-                response_data["spotify_code"] = code_data
-                response_data["message"] += " 📱 Spotify code generated!"
-            
-            print(f"✅ Social playlist created with Spotify code: {playlist_id}")
-            return jsonify(response_data), 200
+            }), 200
         else:
             return jsonify({
                 "status": "error",
                 "message": "Failed to create playlist. Please try again."
             }), 500
-            
+
     except Exception as e:
-        print(f"❌ Error in social playlist creation: {e}")
+        print(f"❌ Error in playlist creation: {e}")
+        import traceback
+        print(traceback.format_exc())
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# NEW SPOTIFY CODE ENDPOINTS
-
-@app.route("/spotify/generate-code", methods=["POST"])
-def generate_spotify_code_endpoint():
-    """Generate Spotify code for any Spotify URL"""
-    try:
-        data = request.get_json()
-        spotify_url = data.get('spotify_url')
-        format_type = data.get('format', 'png')
-        size = data.get('size', 320)
-        
-        if not spotify_url:
-            return jsonify({"status": "error", "message": "Spotify URL required"}), 400
-        
-        code_gen = SpotifyCodeGenerator()
-        code_data = code_gen.generate_spotify_code(spotify_url, format_type, size)
-        
-        if code_data:
-            return jsonify({
-                "status": "success",
-                "spotify_code": code_data
-            }), 200
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Failed to generate Spotify code"
-            }), 500
-            
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route("/spotify/playlist-with-code/<playlist_id>", methods=["GET"])
-def get_playlist_with_code(playlist_id):
-    """Get playlist data including Spotify code"""
-    try:
-        client = get_sheets_client()
-        spreadsheet = client.open("Playlist App Data")
-        social_sheet = spreadsheet.worksheet("Social Playlists")
-        
-        # Find the playlist
-        all_records = social_sheet.get_all_records()
-        playlist_data = None
-        
-        for record in all_records:
-            if record.get('Playlist ID') == playlist_id:
-                playlist_data = record
-                break
-        
-        if not playlist_data:
-            return jsonify({"status": "error", "message": "Playlist not found"}), 404
-        
-        # If no Spotify code exists, generate one
-        if not playlist_data.get('Spotify Code URL'):
-            spotify_url = playlist_data.get('Spotify URL')
-            if spotify_url:
-                code_gen = SpotifyCodeGenerator()
-                code_data = code_gen.generate_spotify_code(spotify_url)
-                if code_data:
-                    playlist_data['Spotify Code URL'] = code_data['code_url']
-                    playlist_data['Has Code'] = True
-                    playlist_data['spotify_code'] = code_data
-        
-        return jsonify({
-            "status": "success",
-            "playlist": playlist_data
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route("/social/feed-with-codes", methods=["GET"])
-def get_social_feed_with_codes():
-    """Get social feed with Spotify codes included"""
-    try:
-        client = get_sheets_client()
-        spreadsheet = client.open("Playlist App Data")
-        social_sheet = spreadsheet.worksheet("Social Playlists")
-        
-        # Get all playlists
-        all_playlists = social_sheet.get_all_records()
-        
-        # Sort by creation date (most recent first)
-        sorted_playlists = sorted(all_playlists, 
-                                key=lambda x: x.get('Created Date', ''), 
-                                reverse=True)
-        
-        # Process playlists and ensure they have Spotify codes
-        feed_playlists = []
-        code_gen = SpotifyCodeGenerator()
-        
-        for playlist in sorted_playlists[:20]:  # Top 20
-            spotify_url = playlist.get('Spotify URL')
-            
-            # If playlist doesn't have a code but has a URL, generate one
-            if spotify_url and not playlist.get('Spotify Code URL'):
-                code_data = code_gen.generate_spotify_code(spotify_url)
-                if code_data:
-                    playlist['Spotify Code URL'] = code_data['code_url']
-                    playlist['Has Code'] = True
-                    playlist['spotify_code'] = code_data
-            elif playlist.get('Spotify Code URL'):
-                playlist['Has Code'] = True
-                playlist['spotify_code'] = {
-                    'code_url': playlist.get('Spotify Code URL'),
-                    'format': playlist.get('Code Format', 'png'),
-                    'size': 320
-                }
-            
-            feed_playlists.append(playlist)
-        
-        return jsonify({
-            "status": "success",
-            "playlists": feed_playlists,
-            "count": len(feed_playlists),
-            "has_spotify_codes": True
-        }), 200
-        
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/social/like-playlist", methods=["POST"])
 def like_playlist():
@@ -545,7 +439,7 @@ def like_playlist():
                 if record.get('Playlist ID') == playlist_id:
                     current_likes = int(record.get('Likes Count', 0))
                     new_likes = current_likes + 1
-                    social_sheet.update(f"J{i}", new_likes)  # Update Likes Count column
+                    social_sheet.update(f"J{i}", new_likes)  # Update Likes Count column (column J)
                     print(f"✅ Updated likes for playlist {playlist_id}: {current_likes} -> {new_likes}")
                     
                     # Also update creator's total likes received
@@ -560,6 +454,7 @@ def like_playlist():
                         "new_likes_count": new_likes
                     }), 200
             
+            # If playlist not found
             return jsonify({
                 "status": "error",
                 "message": "Playlist not found"
@@ -578,7 +473,7 @@ def like_playlist():
 
 @app.route("/social/feed", methods=["GET"])
 def get_social_feed():
-    """Get recent playlists for social feed (without codes for compatibility)"""
+    """Get recent playlists for social feed"""
     try:
         client = get_sheets_client()
         spreadsheet = client.open("Playlist App Data")
@@ -671,7 +566,7 @@ def update_mood_status():
 
 @app.route("/test", methods=["GET"])
 def test_endpoint():
-    """Test endpoint with social features status and Spotify code test"""
+    """Test endpoint with social features status"""
     try:
         access_token = refresh_access_token()
         spotify_status = "✅ Connected" if access_token else "❌ Failed"
@@ -690,45 +585,20 @@ def test_endpoint():
         except Exception as e:
             sheets_status = f"❌ Error: {str(e)}"
         
-        # Test Spotify code generation
-        try:
-            test_url = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
-            code_gen = SpotifyCodeGenerator()
-            test_code = code_gen.generate_spotify_code(test_url)
-            spotify_code_status = "✅ Working" if test_code else "❌ Failed"
-            test_code_url = test_code["code_url"] if test_code else "None"
-        except Exception as e:
-            spotify_code_status = f"❌ Error: {str(e)}"
-            test_code_url = "Error"
-        
         return jsonify({
-            "status": "MoodQue Social Server with Spotify Codes is running",
-            "version": "2.0 - Spotify Codes Edition",
+            "status": "MoodQue Social Server is running",
             "features": {
                 "playlist_creation": "/glide-webhook",
                 "social_feed": "/social/feed", 
-                "social_feed_with_codes": "/social/feed-with-codes",
                 "leaderboard": "/social/leaderboard",
                 "like_playlist": "/social/like-playlist",
-                "mood_status": "/social/mood-status",
-                "generate_spotify_code": "/spotify/generate-code",
-                "playlist_with_code": "/spotify/playlist-with-code/<id>"
+                "mood_status": "/social/mood-status"
             },
             "connections": {
                 "spotify": spotify_status,
                 "google_credentials": google_status,
-                "google_sheets": sheets_status,
-                "spotify_codes": spotify_code_status
+                "google_sheets": sheets_status
             },
-            "test_results": {
-                "spotify_code_test_url": test_code_url
-            },
-            "new_features": [
-                "✨ Spotify Code Generation",
-                "📱 Visual Playlist Sharing",
-                "🔗 Enhanced Social Feed",
-                "📊 Code Analytics"
-            ],
             "timestamp": str(datetime.datetime.now())
         }), 200
     except Exception as e:
@@ -738,45 +608,26 @@ def test_endpoint():
         }), 200
 
 if __name__ == "__main__":
-    print("🚀 Starting MoodQue Social Music Platform with Spotify Codes...")
-    print("🎵 Version 2.0 - Spotify Codes Edition")
-    print("=" * 60)
-    print("📱 Endpoints:")
-    print("   🏠 Home: /")
-    print("   🎵 Create playlist: /glide-webhook")
-    print("   📋 Social feed: /social/feed")
-    print("   📱 Social feed with codes: /social/feed-with-codes")
-    print("   🏆 Leaderboard: /social/leaderboard")
-    print("   ❤️ Like playlists: /social/like-playlist")
-    print("   😊 Mood status: /social/mood-status")
-    print("   🎼 Generate Spotify code: /spotify/generate-code")
-    print("   📊 Playlist with code: /spotify/playlist-with-code/<id>")
-    print("   🧪 Test endpoint: /test")
-    print("=" * 60)
+    print("🚀 Starting MoodQue Social Music Platform...")
+    print("🏠 Home endpoint: /")
+    print("📱 Playlist creation: /glide-webhook")
+    print("🎵 Social feed: /social/feed")
+    print("🏆 Leaderboard: /social/leaderboard") 
+    print("❤️ Like playlists: /social/like-playlist")
+    print("😊 Mood status: /social/mood-status")
+    print("🧪 Test endpoint: /test")
     
     # Check credentials
     try:
         creds = get_google_credentials()
         if creds:
             print("✅ Google credentials loaded successfully")
+            # Ensure social features are set up
             ensure_social_sheets()
-            print("✅ Social sheets with Spotify code support ready")
         else:
             print("⚠️ Google credentials not found - some features may not work")
     except Exception as e:
         print(f"⚠️ Google credentials error: {e}")
-    
-    # Test Spotify code generation
-    try:
-        code_gen = SpotifyCodeGenerator()
-        test_result = code_gen.generate_spotify_code("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M")
-        if test_result:
-            print("✅ Spotify code generation working")
-            print(f"   Sample code URL: {test_result['code_url']}")
-        else:
-            print("⚠️ Spotify code generation test failed")
-    except Exception as e:
-        print(f"⚠️ Spotify code test error: {e}")
     
     # Use Railway's PORT environment variable, fallback to 8080 for local development
     port = int(os.environ.get('PORT', 8080))
