@@ -24,13 +24,12 @@ def handle_glide_webhook():
     event = data.get("event", "")
     playlist_type = data.get("playlist_type", "clean")
     user_name = data.get("user_name", "Anonymous")
-    user_email = data.get("user_email", "")
     search_keywords = data.get("search_keywords", "")
     fallback_artist = data.get("fallback_artist", "")
 
     playlist = build_smart_playlist_enhanced(
         event, genre, time, mood, search_keywords,
-        fallback_artist, playlist_type, user_name, user_email
+        fallback_artist, playlist_type, user_name, 
     )
 
     playlist_id = playlist.get("id")
@@ -75,9 +74,8 @@ def view_playlist():
 @app.route("/get_user_profile", methods=["POST"])
 def get_user_profile():
     data = request.json
-    user_email = data.get("email")
     return jsonify({
-        "email": user_email,
+    
         "username": "TestUser",
         "preferences": {
             "favorite_genres": ["pop", "hip-hop"],
