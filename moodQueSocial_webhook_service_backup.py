@@ -24,52 +24,36 @@ def handle_glide_webhook():
     event = data.get("event", "")
     playlist_type = data.get("playlist_type", "clean")
     user_name = data.get("user_name", "Anonymous")
-    user_email = data.get("user_email", "")
     search_keywords = data.get("search_keywords", "")
     fallback_artist = data.get("fallback_artist", "")
 
-    try:
-        playlist = build_smart_playlist_enhanced(
-            event, genre, time, mood, search_keywords,
-            fallback_artist, playlist_type, user_name
-        )
+    playlist = build_smart_playlist_enhanced(
+        event, genre, time, mood, search_keywords,
+        fallback_artist, playlist_type, user_name, 
+    )
 
-        if not playlist:
-            print("🛑 Playlist generation failed — returned None.")
-            return jsonify({
-                "row_id": row_id,
-                "error": "No playlist created — check mood/genre input or fallback settings.",
-                "spotify_url": None
-            }), 400
+    playlist_id = playlist.get("id")
+    playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+    spotify_code_url = SpotifyCodeGenerator.generate_code_url(playlist_url)
+    track_count = playlist.get("track_count", 0)
 
-        playlist_id = playlist.get("id")
-        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-        spotify_code_url = SpotifyCodeGenerator.generate_code_url(playlist_url)
-        track_count = playlist.get("track_count", 0)
+    # Get cover image
+    access_token = refresh_access_token()
+    cover_image = ""
+    if access_token:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        res = requests.get(f"https://api.spotify.com/v1/playlists/{playlist_id}/images", headers=headers)
+        if res.ok and res.json():
+            cover_image = res.json()[0].get("url", "")
 
-        access_token = refresh_access_token()
-        cover_image = ""
-        if access_token:
-            headers = {"Authorization": f"Bearer {access_token}"}
-            res = requests.get(f"https://api.spotify.com/v1/playlists/{playlist_id}/images", headers=headers)
-            if res.ok and res.json():
-                cover_image = res.json()[0].get("url", "")
-
-        return jsonify({
-            "row_id": row_id,
-            "playlist_id": playlist_id,
-            "spotify_url": playlist_url,
-            "spotify_code_url": spotify_code_url,
-            "track_count": track_count,
-            "cover_image": cover_image
-        })
-
-    except Exception as e:
-        print(f"❌ Exception during playlist creation: {str(e)}")
-        return jsonify({
-            "row_id": row_id,
-            "error": f"Exception occurred: {str(e)}"
-        }), 500
+    return jsonify({
+        "row_id": row_id,
+        "playlist_id": playlist_id,
+        "spotify_url": playlist_url,
+        "spotify_code_url": spotify_code_url,
+        "track_count": track_count,
+        "cover_image": cover_image
+    })
 
 
 # --- Social & User Profile Endpoints ---
@@ -90,9 +74,8 @@ def view_playlist():
 @app.route("/get_user_profile", methods=["POST"])
 def get_user_profile():
     data = request.json
-    user_email = data.get("email")
     return jsonify({
-        "email": user_email,
+    
         "username": "TestUser",
         "preferences": {
             "favorite_genres": ["pop", "hip-hop"],
