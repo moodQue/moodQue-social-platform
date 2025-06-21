@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import os
 import uuid
 import requests
-from moodque_engine import build_playlist  # NEW
+from moodque_engine import build_smart_playlist_enhanced
 
 app = Flask(__name__)
 
@@ -14,23 +14,30 @@ def index():
 @app.route("/glide-webhook", methods=["POST"])
 def handle_glide_webhook():
     data = request.json
-
     row_id = data.get("row_id")
-    try:
-        result = build_playlist(data)
 
-        if not result or "url" not in result:
+    try:
+        playlist_url = build_smart_playlist_enhanced(
+            event=data.get("event_name"),
+            genre=data.get("genre"),
+            time=data.get("duration"),
+            mood_tags=data.get("mood"),
+            search_keywords=data.get("search_keywords"),
+            artist_names=data.get("favorite_artist"),
+            playlist_type=data.get("playlist_type", "clean")
+        )
+
+        if not playlist_url:
             return jsonify({
                 "row_id": row_id,
-                "error": result.get("error", "No playlist created."),
+                "error": "No playlist created — fallback failed.",
                 "spotify_url": None
             }), 400
 
         return jsonify({
             "row_id": row_id,
-            "spotify_url": result["url"],
-            "track_count": result.get("track_count", 0),
-            "message": result.get("message", "Playlist created.")
+            "spotify_url": playlist_url,
+            "message": "✅ Playlist created!"
         })
 
     except Exception as e:
