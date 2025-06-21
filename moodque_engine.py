@@ -20,6 +20,9 @@ def weighted_genre_list(genres):
     return random.sample(weighted, min(5, len(weighted)))
 
 def build_playlist(data):
+    print("📦 Incoming Data:", data)  # NEW LINE
+
+def build_playlist(data):
     access_token = get_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
 
@@ -87,6 +90,8 @@ def build_playlist(data):
         headers=headers,
         json={"uris": track_uris}
     )
+
+    print("🛑 Playlist creation failed:", playlist_resp.text)
 
     if not track_resp.ok:
         return {"error": "Failed to add tracks to playlist."}
