@@ -1,10 +1,8 @@
-
 from flask import Flask, request, jsonify
 import os
 import uuid
 import requests
-from SpotifyPlaylistBuilder import build_smart_playlist_enhanced, refresh_access_token
-from spotify_code_generator import SpotifyCodeGenerator
+from moodque_engine import build_playlist  # NEW
 
 app = Flask(__name__)
 
@@ -18,50 +16,21 @@ def handle_glide_webhook():
     data = request.json
 
     row_id = data.get("row_id")
-    genre = data.get("genre", "")
-    mood = data.get("mood", "")
-    time = int(data.get("time", 30))
-    event = data.get("event", "")
-    playlist_type = data.get("playlist_type", "clean")
-    user_name = data.get("user_name", "Anonymous")
-    user_email = data.get("user_email", "")
-    search_keywords = data.get("search_keywords", "")
-    fallback_artist = data.get("fallback_artist", "")
-
     try:
-        playlist = build_smart_playlist_enhanced(
-            event, genre, time, mood, search_keywords,
-            fallback_artist, playlist_type, user_name
-        )
+        result = build_playlist(data)
 
-        if not playlist:
-            print("🛑 Playlist generation failed — returned None.")
+        if not result or "url" not in result:
             return jsonify({
                 "row_id": row_id,
-                "error": "No playlist created — check mood/genre input or fallback settings.",
+                "error": result.get("error", "No playlist created."),
                 "spotify_url": None
             }), 400
 
-        playlist_id = playlist.get("id")
-        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-        spotify_code_url = SpotifyCodeGenerator.generate_code_url(playlist_url)
-        track_count = playlist.get("track_count", 0)
-
-        access_token = refresh_access_token()
-        cover_image = ""
-        if access_token:
-            headers = {"Authorization": f"Bearer {access_token}"}
-            res = requests.get(f"https://api.spotify.com/v1/playlists/{playlist_id}/images", headers=headers)
-            if res.ok and res.json():
-                cover_image = res.json()[0].get("url", "")
-
         return jsonify({
             "row_id": row_id,
-            "playlist_id": playlist_id,
-            "spotify_url": playlist_url,
-            "spotify_code_url": spotify_code_url,
-            "track_count": track_count,
-            "cover_image": cover_image
+            "spotify_url": result["url"],
+            "track_count": result.get("track_count", 0),
+            "message": result.get("message", "Playlist created.")
         })
 
     except Exception as e:
