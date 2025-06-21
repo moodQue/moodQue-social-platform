@@ -617,7 +617,8 @@ def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords
         print("❌ No tracks found after enhanced search.")
         return None
 
-    playlist_name = f"{event} - {mood_tags or 'Mixed'} [{playlist_type}]"
+    playlist_name = f"{event} ({mood_tags or 'Mixed'}, {playlist_type})"
+
     playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
     if not playlist_id:
         return None
