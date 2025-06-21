@@ -35,10 +35,13 @@ def handle_glide_webhook():
             }), 400
 
         return jsonify({
-            "row_id": row_id,
-            "spotify_url": playlist_url,
-            "message": "✅ Playlist created!"
-        })
+        "row_id": f"{data.get('user_email', '').strip()}_{data.get('event_name', '').strip().replace(' ', '_')}",
+        "playlist_id": playlist_url.split("/")[-1] if playlist_url else "",
+        "spotify_url": playlist_url,
+        "message": "✅ Playlist created!"
+   })
+
+
 
     except Exception as e:
         print(f"❌ Exception during playlist creation: {str(e)}")
