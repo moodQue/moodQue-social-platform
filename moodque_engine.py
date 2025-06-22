@@ -595,7 +595,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         print("❌ Failed to get current user ID")
         return None
     
-    print(f"🎵 Building enhanced playlist: {event}")
+    print(f"🎵 Building enhanced playlist: {event_name}")
     print(f"🎯 Genres: {genre}")
     print(f"😊 Mood: {mood_tags}")
     print(f"🔍 Keywords: {search_keywords}")
@@ -617,7 +617,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         print("❌ No tracks found after enhanced search.")
         return None
 
-    playlist_name = f"A {mood_tags} {genre} playlist created for {event} , {playlist_type})"
+    playlist_name = f"A {mood_tags} {genre} playlist created for {event_name} , {playlist_type})"
 
     playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
     if not playlist_id:
