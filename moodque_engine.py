@@ -582,7 +582,7 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         except:
             return []
 
-def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords, 
+def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
                                 artist_names=None, user_preferences=None, playlist_type="clean"):
     """Enhanced playlist builder with better filtering and no duplicates"""
     track_limit = max(10, int(time) // 3) if time else 20
