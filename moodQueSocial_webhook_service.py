@@ -90,7 +90,6 @@ def handle_glide_webhook():
     try:
         # Your existing playlist creation logic
         playlist_url = build_smart_playlist_enhanced(
-            user_email=data.get('user_email', '').strip(),
             event_name=data.get('event_name', '').strip(),
             genre=data.get('genre', ''),
             mood=data.get('mood', ''),
