@@ -188,7 +188,7 @@ def get_user_profile():
         "username": "TestUser",
         "preferences": {
             "favorite_genres": ["pop", "hip-hop"],
-            "mood": "happy"
+            "mood_tags": "happy"
         }
     })
 
