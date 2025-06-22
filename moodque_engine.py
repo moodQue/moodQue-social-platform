@@ -488,7 +488,7 @@ def filter_explicit_content(track_uris, headers, playlist_type):
 
 def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean", 
-                                 artist_names=None):
+                                 favorite_artist=None):
     """Enhanced search with working fallback"""
     try:
         print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}")
@@ -502,9 +502,9 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         
         # Get artist IDs
         artist_ids = []
-        if artist_names:
+        if favorite_artist:
             try:
-                artist_ids = get_artist_ids(artist_names, headers)
+                artist_ids = get_artist_ids(favorite_artist, headers)
             except Exception as e:
                 print(f"⚠️ Artist lookup failed: {e}")
         
