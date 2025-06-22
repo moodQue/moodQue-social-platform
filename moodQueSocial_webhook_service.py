@@ -92,7 +92,7 @@ def handle_glide_webhook():
         playlist_url = build_smart_playlist_enhanced(
             event_name=data.get('event_name', '').strip(),
             genre=data.get('genre', ''),
-            mood=data.get('mood', ''),
+            mood=data.get('mood_tags', ''),
             time=data.get('time', 30),
             playlist_type=data.get('playlist_type', 'clean'),
             search_keywords=data.get('search_keywords', ''),
