@@ -583,7 +583,7 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             return []
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
-                                artist_names=None, user_preferences=None, playlist_type="clean"):
+                                favorite_artist=None, user_preferences=None, playlist_type="clean"):
     """Enhanced playlist builder with better filtering and no duplicates"""
     track_limit = max(10, int(time) // 3) if time else 20
     access_token = refresh_access_token()
@@ -599,7 +599,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"🎯 Genres: {genre}")
     print(f"😊 Mood: {mood_tags}")
     print(f"🔍 Keywords: {search_keywords}")
-    print(f"🎤 Artists: {artist_names}")
+    print(f"🎤 Favorite Artist: {favorite_artist}")
     print(f"📊 Target tracks: {track_limit}")
     print(f"🎯 Content filter: {playlist_type}")
 
@@ -610,7 +610,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        artist_names=artist_names
+        favorite_artist=favorite_artist
     )
 
     if not track_uris:
