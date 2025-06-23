@@ -28,9 +28,15 @@ def handle_glide_webhook():
     
     logger.info(f"🎵 Processing playlist request for row_id: {row_id}")
     logger.info(f"Request data: {data}")
-    
+
+    def to_pascal_case(snake_str):
+        parts = snake_str.split('_')
+        return ''.join(word.capitalize() for word in parts)
+
+    def format_keys_for_glide(data_dict):
+        return {to_pascal_case(k): v for k, v in data_dict.items()}
+
     try:
-        # Your existing playlist creation logic
         playlist_url = build_smart_playlist_enhanced(
             event_name=data.get('event_name', '').strip(),
             genre=data.get('genre', ''),
@@ -42,9 +48,8 @@ def handle_glide_webhook():
         )
         
         if not playlist_url:
-            # Return failure data - Glide will use this to update columns
             logger.error("❌ No playlist created - fallback failed")
-            return jsonify({
+            response_data = {
                 "row_id": row_id,
                 "playlist_id": "",
                 "spotify_url": "",
@@ -52,35 +57,29 @@ def handle_glide_webhook():
                 "has_spotify_code": "No",
                 "track_count": 0,
                 "error": "Failed to create playlist"
-            }), 200  # Return 200 even for business logic failures
+            }
+            return jsonify(format_keys_for_glide(response_data)), 200
         
-        # Extract playlist ID from URL
         playlist_id = playlist_url.split("/")[-1] if playlist_url else ""
-        
-        # Generate Spotify Code URL
         spotify_code_url = f"https://scannables.scdn.co/uri/plain/spotify:playlist:{playlist_id}" if playlist_id else ""
         
-        # Prepare the response data - this is what Glide will use to update columns
         response_data = {
             "row_id": row_id,
             "playlist_id": playlist_id,
             "spotify_url": playlist_url,
             "spotify_code_url": spotify_code_url,
             "has_spotify_code": "Yes" if spotify_code_url else "No",
-            "track_count": data.get('time', 30)  # Approximate based on duration
+            "track_count": data.get('time', 30)
         }
         
         logger.info(f"✅ Playlist created successfully: {playlist_url}")
         logger.info(f"📡 Returning data to Glide: {response_data}")
         
-        # Return the data directly - Glide will use this response to update columns
-        return jsonify(response_data), 200
+        return jsonify(format_keys_for_glide(response_data)), 200
 
     except Exception as e:
         logger.error(f"❌ Exception during playlist creation: {str(e)}")
-        
-        # Return error data - Glide will use this to update columns
-        return jsonify({
+        error_data = {
             "row_id": row_id,
             "playlist_id": "",
             "spotify_url": "",
@@ -88,7 +87,9 @@ def handle_glide_webhook():
             "has_spotify_code": "No",
             "track_count": 0,
             "error": str(e)
-        }), 200  # Return 200 so Glide can process the response
+        }
+        return jsonify(format_keys_for_glide(error_data)), 200
+
 
 
 # --- Social & User Profile Endpoints ---
