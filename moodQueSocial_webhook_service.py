@@ -65,10 +65,12 @@ def handle_glide_webhook():
             "Track Count": int(data.get('time', 30))
         }
 
-        logger.info(f"✅ Playlist created successfully: {playlist_url}")
-        logger.info(f"📡 Returning data to Glide: {updates}")
+        response_data = { "updates": updates }
 
-        return jsonify({"updates": updates}), 200
+        logger.info(f"📡 Returning data to Glide: {response_data}")
+        logger.info(f"✅ Playlist created successfully: {playlist_url}")
+
+        return jsonify(response_data), 200
 
     except Exception as e:
         logger.error(f"❌ Exception during playlist creation: {str(e)}")
@@ -78,12 +80,13 @@ def handle_glide_webhook():
                 "Spotify URL": "",
                 "Spotify Code URL": "",
                 "Has Spotify Code": "No",
-                "Track Count": 0
+                "Track Count": 0,
+                "Raw Webhook": "{}"
             }
         }), 200
 
 
-
+    
 # --- Social & User Profile Endpoints ---
 
 @app.route("/like_playlist", methods=["POST"])
