@@ -585,8 +585,8 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         except:
             return []
 
-def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords, 
-                                artist_names=None, user_preferences=None, playlist_type="clean"):
+def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
+                                favorite_artist=None, user_preferences=None, playlist_type="clean"):
     """Enhanced playlist builder with detailed debug logging."""
     
     request_id = str(uuid.uuid4())[:8]
@@ -601,11 +601,11 @@ def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords
         print("❌ Failed to get current user ID")
         return None
 
-    print(f"[{request_id}] 🎵 Building playlist for event: '{event}'")
+    print(f"[{request_id}] 🎵 Building playlist for event: '{event_name}'")
     print(f"[{request_id}] 🎯 Genre Input: {genre}")
     print(f"[{request_id}] 😊 Mood Tag: {mood_tags}")
     print(f"[{request_id}] 🔍 Search Keywords: {search_keywords}")
-    print(f"[{request_id}] 🎤 Artist Names: {artist_names}")
+    print(f"[{request_id}] 🎤 Artist Names: {favorite_artist}")
     print(f"[{request_id}] 📊 Target Track Count: {track_limit}")
     print(f"[{request_id}] 🚦 Content Filter: {playlist_type}")
 
@@ -616,7 +616,7 @@ def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        artist_names=artist_names
+        artist_names=favorite_artist
     )
 
     if not track_uris:
@@ -627,7 +627,7 @@ def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords
     for i, uri in enumerate(track_uris):
         print(f"[{request_id}] {i+1}. {uri}")
 
-    playlist_name = f"{event} - {mood_tags or 'Mixed'} [{playlist_type}]"
+    playlist_name = f"{event_name} - {mood_tags or 'Mixed'} [{playlist_type}]"
     playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
 
     if not playlist_id:
