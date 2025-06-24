@@ -3,6 +3,9 @@ import os
 import requests
 import base64
 import random
+import uuid
+
+
 
 load_dotenv(dotenv_path=".env")
 
@@ -582,26 +585,29 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         except:
             return []
 
-def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
-                                favorite_artist=None, user_preferences=None, playlist_type="clean"):
-    """Enhanced playlist builder with better filtering and no duplicates"""
+def build_smart_playlist_enhanced(event, genre, time, mood_tags, search_keywords, 
+                                artist_names=None, user_preferences=None, playlist_type="clean"):
+    """Enhanced playlist builder with detailed debug logging."""
+    
+    request_id = str(uuid.uuid4())[:8]
+    print(f"\n\n🧠🔁 Playlist Build ID: {request_id}")
+    
     track_limit = max(10, int(time) // 3) if time else 20
     access_token = refresh_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    # Get current user ID
     current_user_id = get_current_user_id(headers)
     if not current_user_id:
         print("❌ Failed to get current user ID")
         return None
-    
-    print(f"🎵 Building enhanced playlist: {event_name}")
-    print(f"🎯 Genres: {genre}")
-    print(f"😊 Mood: {mood_tags}")
-    print(f"🔍 Keywords: {search_keywords}")
-    print(f"🎤 Favorite Artist: {favorite_artist}")
-    print(f"📊 Target tracks: {track_limit}")
-    print(f"🎯 Content filter: {playlist_type}")
+
+    print(f"[{request_id}] 🎵 Building playlist for event: '{event}'")
+    print(f"[{request_id}] 🎯 Genre Input: {genre}")
+    print(f"[{request_id}] 😊 Mood Tag: {mood_tags}")
+    print(f"[{request_id}] 🔍 Search Keywords: {search_keywords}")
+    print(f"[{request_id}] 🎤 Artist Names: {artist_names}")
+    print(f"[{request_id}] 📊 Target Track Count: {track_limit}")
+    print(f"[{request_id}] 🚦 Content Filter: {playlist_type}")
 
     track_uris = search_spotify_tracks_enhanced(
         genre=genre,
@@ -610,22 +616,29 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        favorite_artist=favorite_artist
+        artist_names=artist_names
     )
 
     if not track_uris:
-        print("❌ No tracks found after enhanced search.")
+        print(f"[{request_id}] ❌ No tracks found after enhanced search.")
         return None
 
-    playlist_name = f"A {mood_tags} {genre} playlist created for {event_name} , {playlist_type})"
+    print(f"[{request_id}] 🔁 Track URIs Returned:")
+    for i, uri in enumerate(track_uris):
+        print(f"[{request_id}] {i+1}. {uri}")
 
+    playlist_name = f"{event} - {mood_tags or 'Mixed'} [{playlist_type}]"
     playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
+
     if not playlist_id:
+        print(f"[{request_id}] ❌ Playlist creation failed.")
         return None
-        
+
     success = add_tracks_to_playlist(playlist_id, track_uris, headers)
     if success:
-        print(f"✅ Created enhanced playlist '{playlist_name}' with {len(track_uris)} tracks")
-        print(f"🔗 Playlist URL: {playlist_url}")
+        print(f"[{request_id}] ✅ Playlist created: {playlist_name} ({len(track_uris)} tracks)")
+        print(f"[{request_id}] 🔗 URL: {playlist_url}")
         return playlist_url
-    return None
+    else:
+        print(f"[{request_id}] ❌ Failed to add tracks to playlist.")
+        return None
