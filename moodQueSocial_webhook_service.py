@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask import jsonify, request
 import os
 import uuid
 import requests
@@ -21,7 +22,7 @@ def index():
 def handle_glide_webhook():
     """
     This webhook is called BY Glide when a new playlist needs to be created.
-    It should return the playlist data directly in the response.
+    It returns playlist metadata along with a Raw Webhook string for Glide to parse later.
     """
     data = request.json
     row_id = data.get("row_id")
@@ -48,7 +49,8 @@ def handle_glide_webhook():
                     "Spotify URL": "",
                     "Spotify Code URL": "",
                     "Has Spotify Code": "No",
-                    "Track Count": 0
+                    "Track Count": 0,
+                    "Raw Webhook": "{}"
                 }
             }), 200
 
