@@ -63,14 +63,16 @@ def handle_glide_webhook():
         playlist_id = playlist_url.split("/")[-1] if playlist_url else ""
         spotify_code_url = f"https://scannables.scdn.co/uri/plain/spotify:playlist:{playlist_id}" if playlist_id else ""
         
-        response_data = {
-            "row_id": row_id,
-            "Playlist Id": playlist_id,
-            "Spotify URL": playlist_url,
-            "Spotify Code URL": spotify_code_url,
-            "Has Spotify Code": "Yes" if spotify_code_url else "No",
-            "Track Count": data.get('time', 30)
-        }
+        response_data =({
+    "updates": {
+        "Playlist ID": playlist_id,
+        "Spotify URL": playlist_url,
+        "Spotify Code URL": spotify_code_url,
+        "Has Spotify Code": "Yes" if spotify_code_url else "No",
+        "Track Count": int(data.get('time', 30))
+       }
+        "tableName": "Glide Social Feed"
+    }), 200
         
         logger.info(f"✅ Playlist created successfully: {playlist_url}")
         logger.info(f"📡 Returning data to Glide: {response_data}")
