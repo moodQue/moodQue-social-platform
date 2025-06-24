@@ -598,17 +598,18 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
 
     current_user_id = get_current_user_id(headers)
     if not current_user_id:
-        print("❌ Failed to get current user ID")
+        print(f"[{request_id}] ❌ Failed to get current user ID")
         return None
 
     print(f"[{request_id}] 🎵 Building playlist for event: '{event_name}'")
     print(f"[{request_id}] 🎯 Genre Input: {genre}")
     print(f"[{request_id}] 😊 Mood Tag: {mood_tags}")
     print(f"[{request_id}] 🔍 Search Keywords: {search_keywords}")
-    print(f"[{request_id}] 🎤 Artist Names: {favorite_artist}")
+    print(f"[{request_id}] 🎤 Favorite Artist(s): {favorite_artist}")
     print(f"[{request_id}] 📊 Target Track Count: {track_limit}")
     print(f"[{request_id}] 🚦 Content Filter: {playlist_type}")
 
+    # ✅ Use 'favorite_artist' to match moodque_engine.py
     track_uris = search_spotify_tracks_enhanced(
         genre=genre,
         headers=headers,
@@ -616,7 +617,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        artist_names=favorite_artist
+        favorite_artist=favorite_artist
     )
 
     if not track_uris:
