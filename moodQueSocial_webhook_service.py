@@ -29,13 +29,6 @@ def handle_glide_webhook():
     logger.info(f"🎵 Processing playlist request for row_id: {row_id}")
     logger.info(f"Request data: {data}")
 
-    def to_pascal_case(snake_str):
-        parts = snake_str.split('_')
-        return ''.join(word.capitalize() for word in parts)
-
-    def format_keys_for_glide(data_dict):
-        return {to_pascal_case(k): v for k, v in data_dict.items()}
-
     try:
         playlist_url = build_smart_playlist_enhanced(
             event_name=data.get('event_name', '').strip(),
@@ -46,51 +39,46 @@ def handle_glide_webhook():
             search_keywords=data.get('search_keywords', ''),
             favorite_artist=data.get('favorite_artist', '')
         )
-        
+
         if not playlist_url:
             logger.error("❌ No playlist created - fallback failed")
-            response_data = {
-                "row_id": row_id,
-                "playlist_id": "",
-                "spotify_url": "",
-                "spotify_code_url": "",
-                "has_spotify_code": "No",
-                "track_count": 0,
-                "error": "Failed to create playlist"
-            }
-            return jsonify(format_keys_for_glide(response_data)), 200
-        
+            return jsonify({
+                "updates": {
+                    "Playlist ID": "",
+                    "Spotify URL": "",
+                    "Spotify Code URL": "",
+                    "Has Spotify Code": "No",
+                    "Track Count": 0
+                }
+            }), 200
+
         playlist_id = playlist_url.split("/")[-1] if playlist_url else ""
         spotify_code_url = f"https://scannables.scdn.co/uri/plain/spotify:playlist:{playlist_id}" if playlist_id else ""
-        
-        response_data =({
-    "updates": {
-        "Playlist ID": playlist_id,
-        "Spotify URL": playlist_url,
-        "Spotify Code URL": spotify_code_url,
-        "Has Spotify Code": "Yes" if spotify_code_url else "No",
-        "Track Count": int(data.get('time', 30))
-       }
-        "tableName": "Glide Social Feed"
-    }), 200
-        
+
+        updates = {
+            "Playlist ID": playlist_id,
+            "Spotify URL": playlist_url,
+            "Spotify Code URL": spotify_code_url,
+            "Has Spotify Code": "Yes" if spotify_code_url else "No",
+            "Track Count": int(data.get('time', 30))
+        }
+
         logger.info(f"✅ Playlist created successfully: {playlist_url}")
-        logger.info(f"📡 Returning data to Glide: {response_data}")
-        
-        return jsonify(format_keys_for_glide(response_data)), 200
+        logger.info(f"📡 Returning data to Glide: {updates}")
+
+        return jsonify({"updates": updates}), 200
 
     except Exception as e:
         logger.error(f"❌ Exception during playlist creation: {str(e)}")
-        error_data = {
-            "row_id": row_id,
-            "playlist_id": "",
-            "spotify_url": "",
-            "spotify_code_url": "",
-            "has_spotify_code": "No",
-            "track_count": 0,
-            "error": str(e)
-        }
-        return jsonify(format_keys_for_glide(error_data)), 200
+        return jsonify({
+            "updates": {
+                "Playlist ID": "",
+                "Spotify URL": "",
+                "Spotify Code URL": "",
+                "Has Spotify Code": "No",
+                "Track Count": 0
+            }
+        }), 200
 
 
 
