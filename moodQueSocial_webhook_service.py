@@ -65,11 +65,11 @@ def handle_glide_webhook():
         
         response_data = {
             "row_id": row_id,
-            "playlist_id": playlist_id,
-            "spotify_url": playlist_url,
-            "spotify_code_url": spotify_code_url,
-            "has_spotify_code": "Yes" if spotify_code_url else "No",
-            "track_count": data.get('time', 30)
+            "Playlist_Id": playlist_id,
+            "Spotify_URL": playlist_url,
+            "Spotify_Code_URL": spotify_code_url,
+            "Has_Spotify_Code": "Yes" if spotify_code_url else "No",
+            "Track_Count": data.get('time', 30)
         }
         
         logger.info(f"✅ Playlist created successfully: {playlist_url}")
