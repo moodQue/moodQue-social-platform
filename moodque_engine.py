@@ -4,7 +4,7 @@ import requests
 import base64
 import random
 import uuid
-from moodque_engine import get_spotify_user_id, create_new_playlist
+from moodque_utilities import get_spotify_user_id, create_new_playlist
 
 load_dotenv(dotenv_path=".env")
 
@@ -92,6 +92,11 @@ def get_current_user_id(headers):
     else:
         print(f"❌ Failed to get user info: {res.status_code}")
         return None
+    
+def get_spotify_user_id(headers):
+    res = requests.get("https://api.spotify.com/v1/me", headers=headers)
+    return res.json()["id"]
+
 
 def create_playlist(user_id, name, headers, description="MoodQue Auto Playlist"):
     url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
