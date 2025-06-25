@@ -504,7 +504,7 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         if use_lastfm and favorite_artist:
             print(f"🎯 Using Last.fm + Spotify search for: {favorite_artist}")
             from lastfm_helpers import get_similar_artists, get_top_tracks
-            from moodque_engine import search_spotify_track  # You may already have this elsewhere
+            from moodque_utilities import search_spotify_track  # You may already have this elsewhere
 
             artist_list = [favorite_artist] + get_similar_artists(favorite_artist, limit=5)
             all_candidates = []
@@ -642,7 +642,8 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         use_lastfm=True  # 👈 Enable Last.fm discovery
     )
 
-    track_uris = [t["uri"] for t in track_items]
+    track_uris = [t["uri"] if isinstance(t, dict) else t for t in track_items]
+
 
     # 🎵 Create Spotify playlist and add tracks
     user_id = get_spotify_user_id(headers)
