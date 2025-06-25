@@ -626,6 +626,10 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"[{request_id}] 🎯 Target Track Count: {time}")
     print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
 
+    # Sanitize favorite_artist string
+    if favorite_artist:
+      favorite_artist = favorite_artist.replace("’", "'").strip()
+    
     access_token = refresh_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
     track_limit = int(time)
@@ -644,6 +648,8 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
 
     track_uris = [t["uri"] if isinstance(t, dict) else t for t in track_items]
 
+    if isinstance(track_uris, str):
+      track_uris = [track_uris]
 
     # 🎵 Create Spotify playlist and add tracks
     user_id = get_spotify_user_id(headers)

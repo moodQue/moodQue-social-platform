@@ -21,8 +21,12 @@ def get_similar_artists(artist_name, limit=5):
     res = requests.get(url, params=params)
     print("🧪 RAW Last.fm response:", res.status_code, res.text)
     if res.status_code == 200:
-        return [a["name"] for a in res.json().get("similarartists", {}).get("artist", [])]
-    return []
+     artists = [a["name"] for a in res.json().get("similarartists", {}).get("artist", [])]
+    if not artists:
+        print("⚠️ No similar artists found. Falling back to favorite_artist only.")
+        return [artist_name] if artist_name else []
+    return artists
+
 
 
 def get_top_tracks(artist_name, limit=5):
