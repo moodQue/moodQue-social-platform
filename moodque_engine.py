@@ -646,7 +646,15 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         use_lastfm=True  # 👈 Enable Last.fm discovery
     )
 
-    track_uris = [t["uri"] if isinstance(t, dict) else t for t in track_items]
+    track_uris = []
+    for t in track_items:
+        if isinstance(t, dict) and "uri" in t:
+            track_uris.append(t["uri"])
+        elif isinstance(t, str):
+            track_uris.append(t)
+        else:
+            print(f"⚠️ Skipping malformed track item: {t}")
+
 
     if isinstance(track_uris, str):
       track_uris = [track_uris]

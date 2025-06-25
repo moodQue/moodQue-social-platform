@@ -73,6 +73,7 @@ def handle_glide_webhook():
         logger.info(f"✅ Playlist created successfully: {playlist_url}")
         if not isinstance(updates, dict):
          logger.error(f"🚨 'updates' is type {type(updates)} instead of dict: {updates}")
+         logger.info(f"🔁 Full webhook response: {json.dumps(response_data)}")
 
         return jsonify(response_data), 200
 
