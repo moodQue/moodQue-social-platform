@@ -4,8 +4,7 @@ import requests
 import base64
 import random
 import uuid
-
-
+from moodque_engine import get_spotify_user_id, create_new_playlist
 
 load_dotenv(dotenv_path=".env")
 
@@ -491,11 +490,33 @@ def filter_explicit_content(track_uris, headers, playlist_type):
 
 def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean", 
-                                 favorite_artist=None):
-    """Enhanced search with working fallback"""
+                                 favorite_artist=None, use_lastfm=False):
+    """Enhanced search with optional Last.fm fallback, mood filtering, and Spotify recommendations."""
     try:
         print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}")
         
+        # Last.fm Strategy
+        if use_lastfm and favorite_artist:
+            print(f"🎯 Using Last.fm + Spotify search for: {favorite_artist}")
+            from lastfm_helpers import get_similar_artists, get_top_tracks
+            from moodque_engine import search_spotify_track  # You may already have this elsewhere
+
+            artist_list = [favorite_artist] + get_similar_artists(favorite_artist, limit=5)
+            all_candidates = []
+            for artist in artist_list:
+                all_candidates += get_top_tracks(artist, limit=3)
+
+            all_tracks = []
+            for title, artist in all_candidates:
+                uri = search_spotify_track(artist, title, headers)
+                if uri:
+                    all_tracks.append({"uri": uri})
+                if len(all_tracks) >= limit:
+                    break
+
+            print(f"✅ Last.fm + search complete: {len(all_tracks)} tracks")
+            return all_tracks
+
         # Parse genres
         if isinstance(genre, str) and ',' in genre:
             spotify_genres = parse_genre_list(genre)
@@ -556,7 +577,7 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             except Exception as e:
                 print(f"⚠️ Fallback search failed: {e}")
         
-        # Remove duplicates if we have enough tracks
+        # Deduping
         if len(all_tracks) > limit:
             try:
                 filtered_tracks = remove_duplicates_and_filter(all_tracks, headers)
@@ -585,61 +606,44 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         except:
             return []
 
+
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
-                                favorite_artist=None, user_preferences=None, playlist_type="clean"):
-    """Enhanced playlist builder with detailed debug logging."""
-    
-    request_id = str(uuid.uuid4())[:8]
-    print(f"\n\n🧠🔁 Playlist Build ID: {request_id}")
-    
-    track_limit = max(10, int(time) // 3) if time else 20
+                                   playlist_type, favorite_artist, request_id=None):
+    """
+    Build a playlist using enhanced search logic (Spotify + Last.fm),
+    based on event context, genre, mood, keywords, and favorite artist.
+    """
+    print(f"[{request_id}] 🎧 Building playlist for event: '{event_name}'")
+    print(f"[{request_id}] 🔥 Genre Input: {genre}")
+    print(f"[{request_id}] 🎭 Mood Tag: {mood_tags}")
+    print(f"[{request_id}] 🧠 Search Keywords: {search_keywords}")
+    print(f"[{request_id}] 🌟 Favorite Artist(s): {favorite_artist}")
+    print(f"[{request_id}] 🎯 Target Track Count: {time}")
+    print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
+
     access_token = refresh_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
+    track_limit = int(time)
 
-    current_user_id = get_current_user_id(headers)
-    if not current_user_id:
-        print(f"[{request_id}] ❌ Failed to get current user ID")
-        return None
-
-    print(f"[{request_id}] 🎵 Building playlist for event: '{event_name}'")
-    print(f"[{request_id}] 🎯 Genre Input: {genre}")
-    print(f"[{request_id}] 😊 Mood Tag: {mood_tags}")
-    print(f"[{request_id}] 🔍 Search Keywords: {search_keywords}")
-    print(f"[{request_id}] 🎤 Favorite Artist(s): {favorite_artist}")
-    print(f"[{request_id}] 📊 Target Track Count: {track_limit}")
-    print(f"[{request_id}] 🚦 Content Filter: {playlist_type}")
-
-    # ✅ Use 'favorite_artist' to match moodque_engine.py
-    track_uris = search_spotify_tracks_enhanced(
+    # 🌐 Run enhanced track discovery
+    track_items = search_spotify_tracks_enhanced(
         genre=genre,
         headers=headers,
         limit=track_limit,
         mood_tags=mood_tags,
         search_keywords=search_keywords,
         playlist_type=playlist_type,
-        favorite_artist=favorite_artist
+        favorite_artist=favorite_artist,
+        use_lastfm=True  # 👈 Enable Last.fm discovery
     )
 
-    if not track_uris:
-        print(f"[{request_id}] ❌ No tracks found after enhanced search.")
-        return None
+    track_uris = [t["uri"] for t in track_items]
 
-    print(f"[{request_id}] 🔁 Track URIs Returned:")
-    for i, uri in enumerate(track_uris):
-        print(f"[{request_id}] {i+1}. {uri}")
+    # 🎵 Create Spotify playlist and add tracks
+    user_id = get_spotify_user_id(headers)
+    playlist_id = create_new_playlist(headers, user_id, event_name)
+    add_tracks_to_playlist(headers, playlist_id, track_uris)
 
-    playlist_name = f"{event_name} - {mood_tags or 'Mixed'} [{playlist_type}]"
-    playlist_id, playlist_url = create_playlist(current_user_id, playlist_name, headers)
-
-    if not playlist_id:
-        print(f"[{request_id}] ❌ Playlist creation failed.")
-        return None
-
-    success = add_tracks_to_playlist(playlist_id, track_uris, headers)
-    if success:
-        print(f"[{request_id}] ✅ Playlist created: {playlist_name} ({len(track_uris)} tracks)")
-        print(f"[{request_id}] 🔗 URL: {playlist_url}")
-        return playlist_url
-    else:
-        print(f"[{request_id}] ❌ Failed to add tracks to playlist.")
-        return None
+    playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+    print(f"[{request_id}] ✅ Playlist created: {playlist_url}")
+    return playlist_url
