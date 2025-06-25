@@ -8,6 +8,8 @@ FILES_TO_ARCHIVE = [
     "spotify_code_generator.py",
     "test_lastfm_pipeline.py",
     "moodQueSocial_webhook_service_backup.py"
+    "test_lastfm_pipeline.py"
+
 ]
 
 ARCHIVE_DIR = "archive"
