@@ -2,14 +2,12 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()  # <-- Make sure this is called at the top level
-
+load_dotenv(dotenv_path=".env")
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
-print(f"🔑 Last.fm API Key loaded: {LASTFM_API_KEY is not None}")
-
-
 
 def get_similar_artists(artist_name, limit=5):
+    """Fetch similar artists from Last.fm"""
+    url = "https://ws.audioscrobbler.com/2.0/"
     params = {
         "method": "artist.getsimilar",
         "artist": artist_name,
@@ -17,20 +15,17 @@ def get_similar_artists(artist_name, limit=5):
         "format": "json",
         "limit": limit
     }
-    res = requests.get("https://ws.audioscrobbler.com/2.0/", params=params)
-    print("📡 RAW Last.fm response:", res.status_code, res.text)
-    try:
-        data = res.json()
-        artists = data.get("similarartists", {}).get("artist", [])
-        return [a["name"] for a in artists if "name" in a]
-    except Exception as e:
-        print(f"⚠️ Error parsing similar artists: {e}")
-        return []
-
-
-
+    res = requests.get(url, params=params)
+    print("🔎 RAW Last.fm response:", res.status_code, res.text)
+    if res.status_code == 200:
+        try:
+            return [a["name"] for a in res.json().get("similarartists", {}).get("artist", [])]
+        except Exception as e:
+            print(f"⚠️ Failed to parse similar artists: {e}")
+    return []
 
 def get_top_tracks(artist_name, limit=5):
+    """Get top tracks for a given artist from Last.fm"""
     url = "https://ws.audioscrobbler.com/2.0/"
     params = {
         "method": "artist.gettoptracks",
@@ -39,7 +34,11 @@ def get_top_tracks(artist_name, limit=5):
         "format": "json",
         "limit": limit
     }
-    res = requests.get(url, params=params)
-    if res.status_code == 200:
-        return [(t["name"], artist_name) for t in res.json().get("toptracks", {}).get("track", [])]
+    try:
+        res = requests.get(url, params=params)
+        if res.status_code == 200:
+            raw = res.json()
+            return [(t["name"], artist_name) for t in raw.get("toptracks", {}).get("track", []) if isinstance(t, dict) and "name" in t]
+    except Exception as e:
+        print(f"❌ Error fetching top tracks for {artist_name}: {e}")
     return []
