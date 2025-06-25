@@ -109,8 +109,14 @@ def search_spotify_tracks_fallback(seed_genre, headers, limit, mood_tags, search
     query = f"{search_keywords or seed_genre}"
     url = "https://api.spotify.com/v1/search"
     params = {"q": query, "type": "track", "limit": limit}
-    res = requests.get(url, headers=headers, params=params)
-    return [{"uri": t["uri"]} for t in res.json().get("tracks", {}).get("items", [])]
+    try:
+        res = requests.get(url, headers=headers, params=params)
+        data = res.json()
+        return [{"uri": t["uri"]} for t in data.get("tracks", {}).get("items", []) if isinstance(t, dict)]
+    except Exception as e:
+        print(f"❌ Fallback search error: {e}")
+        return []
+
 
 
 def search_spotify_track(artist, title, headers):

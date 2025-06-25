@@ -614,10 +614,6 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
                                    playlist_type, favorite_artist, request_id=None):
-    """
-    Build a playlist using enhanced search logic (Spotify + Last.fm),
-    based on event context, genre, mood, keywords, and favorite artist.
-    """
     print(f"[{request_id}] 🎧 Building playlist for event: '{event_name}'")
     print(f"[{request_id}] 🔥 Genre Input: {genre}")
     print(f"[{request_id}] 🎭 Mood Tag: {mood_tags}")
@@ -626,15 +622,13 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"[{request_id}] 🎯 Target Track Count: {time}")
     print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
 
-    # Sanitize favorite_artist string
     if favorite_artist:
-      favorite_artist = favorite_artist.replace("’", "'").strip()
-    
+        favorite_artist = favorite_artist.replace("’", "'").strip()
+
     access_token = refresh_access_token()
     headers = {"Authorization": f"Bearer {access_token}"}
     track_limit = int(time)
 
-    # 🌐 Run enhanced track discovery
     track_items = search_spotify_tracks_enhanced(
         genre=genre,
         headers=headers,
@@ -643,9 +637,10 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         search_keywords=search_keywords,
         playlist_type=playlist_type,
         favorite_artist=favorite_artist,
-        use_lastfm=True  # 👈 Enable Last.fm discovery
+        use_lastfm=True
     )
 
+    # ✅ Defensive conversion to ensure all values are valid Spotify URIs
     track_uris = []
     for t in track_items:
         if isinstance(t, dict) and "uri" in t:
@@ -653,13 +648,8 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         elif isinstance(t, str):
             track_uris.append(t)
         else:
-            print(f"⚠️ Skipping malformed track item: {t}")
+            print(f"[{request_id}] ⚠️ Skipping malformed track item: {t}")
 
-
-    if isinstance(track_uris, str):
-      track_uris = [track_uris]
-
-    # 🎵 Create Spotify playlist and add tracks
     user_id = get_spotify_user_id(headers)
     playlist_id = create_new_playlist(headers, user_id, event_name)
     add_tracks_to_playlist(headers, playlist_id, track_uris)

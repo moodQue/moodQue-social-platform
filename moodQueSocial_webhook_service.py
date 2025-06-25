@@ -27,7 +27,8 @@ def handle_glide_webhook():
     It returns playlist metadata along with a Raw Webhook string for Glide to parse later.
     """
     data = request.json
-    row_id = data.get("row_id")
+    row_id = data.get("🔒 row_id") or data.get("row_id")
+
     
     logger.info(f"🎵 Processing playlist request for row_id: {row_id}")
     logger.info(f"Request data: {data}")
