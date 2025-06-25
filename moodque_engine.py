@@ -606,10 +606,18 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
     except Exception as e:
         print(f"❌ Error in enhanced search: {e}")
         # Ultimate fallback
-        try:
-            return search_spotify_tracks_fallback("pop", headers, limit, mood_tags, search_keywords, playlist_type)
-        except:
+    try:
+        fallback = search_spotify_tracks_fallback("pop", headers, limit, mood_tags, search_keywords, playlist_type)
+        if isinstance(fallback, list):
+            return fallback
+        elif isinstance(fallback, str):
+            return [{"uri": fallback}]
+        else:
             return []
+    except Exception as e:
+        print(f"❌ Ultimate fallback failed: {e}")
+        return []
+
 
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
