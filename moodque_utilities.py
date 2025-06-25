@@ -52,8 +52,18 @@ def create_new_playlist(user_id, headers, name, description=""):
 
 def add_tracks_to_playlist(headers, playlist_id, track_uris):
     url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+    
+    # Ensure track_uris is a list of strings
+    if isinstance(track_uris, list):
+        track_uris = [t["uri"] if isinstance(t, dict) else t for t in track_uris]
+
     payload = {"uris": track_uris}
-    requests.post(url, headers=headers, json=payload)
+    res = requests.post(url, headers=headers, json=payload)
+
+    if res.status_code != 201:
+        print(f"❌ Error adding tracks: {res.status_code} {res.text}")
+    else:
+        print(f"✅ Successfully added {len(track_uris)} tracks to playlist")
 
 
 def parse_genre_list(raw_genres):
