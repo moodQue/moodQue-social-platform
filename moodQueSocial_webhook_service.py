@@ -6,7 +6,9 @@ import requests
 import json
 import time
 import logging
-from moodque_engine import build_smart_playlist_enhanced, create_new_playlist
+from moodque_engine import build_smart_playlist_enhanced
+from moodque_utilities import create_new_playlist
+
 
 app = Flask(__name__)
 

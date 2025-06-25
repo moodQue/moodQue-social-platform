@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import requests
 
 from lastfm_helpers import get_similar_artists, get_top_tracks
-from moodque_engine import build_smart_playlist_enhanced
+from moodque_utilities import search_spotify_track
 from moodque_utilities import refresh_access_token
 load_dotenv()
 
