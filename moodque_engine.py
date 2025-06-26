@@ -354,85 +354,280 @@ def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artis
         print(f"❌ Exception in recommendations: {e}")
         return []
 
+# Replace the search_spotify_tracks_fallback function in your moodque_engine.py with this improved version:
+
 def search_spotify_tracks_fallback(genre, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean"):
-    """Fallback search using text-based queries"""
+    """Improved fallback search using multiple search strategies"""
     search_url = "https://api.spotify.com/v1/search"
+    all_tracks = []
     
-    # Build search query
-    query_parts = []
-    if genre:
-        query_parts.append(f"genre:{genre}")
-    if search_keywords:
-        query_parts.append(search_keywords)
-    if mood_tags:
-        query_parts.append(mood_tags)
+    # Strategy 1: Search by genre
+    if genre and genre != "pop":
+        print(f"🔍 Fallback strategy 1: Searching by genre '{genre}'")
+        try:
+            params = {
+                "q": f"genre:{genre}",
+                "type": "track",
+                "limit": min(limit, 50),
+                "market": "US"
+            }
+            
+            res = requests.get(search_url, headers=headers, params=params)
+            if res.status_code == 200:
+                tracks = extract_tracks_from_search(res.json(), playlist_type)
+                all_tracks.extend(tracks)
+                print(f"✅ Genre search found {len(tracks)} tracks")
+        except Exception as e:
+            print(f"❌ Genre search failed: {e}")
     
-    query = " ".join(query_parts) if query_parts else "popular music"
+    # Strategy 2: Search by mood/keywords
+    if (mood_tags or search_keywords) and len(all_tracks) < limit:
+        search_terms = []
+        if mood_tags:
+            search_terms.append(mood_tags.lower())
+        if search_keywords:
+            search_terms.append(search_keywords.lower())
+        
+        query = " ".join(search_terms)
+        print(f"🔍 Fallback strategy 2: Searching by mood/keywords '{query}'")
+        
+        try:
+            params = {
+                "q": query,
+                "type": "track",
+                "limit": min(limit, 50),
+                "market": "US"
+            }
+            
+            res = requests.get(search_url, headers=headers, params=params)
+            if res.status_code == 200:
+                tracks = extract_tracks_from_search(res.json(), playlist_type)
+                # Avoid duplicates
+                new_tracks = [t for t in tracks if t not in all_tracks]
+                all_tracks.extend(new_tracks)
+                print(f"✅ Mood/keyword search found {len(new_tracks)} new tracks")
+        except Exception as e:
+            print(f"❌ Mood/keyword search failed: {e}")
+    
+    # Strategy 3: Popular tracks by year (current hits)
+    if len(all_tracks) < limit:
+        print(f"🔍 Fallback strategy 3: Searching for popular 2024 tracks")
+        try:
+            params = {
+                "q": "year:2024",
+                "type": "track",
+                "limit": min(limit, 50),
+                "market": "US"
+            }
+            
+            res = requests.get(search_url, headers=headers, params=params)
+            if res.status_code == 200:
+                tracks = extract_tracks_from_search(res.json(), playlist_type)
+                new_tracks = [t for t in tracks if t not in all_tracks]
+                all_tracks.extend(new_tracks)
+                print(f"✅ 2024 popular search found {len(new_tracks)} new tracks")
+        except Exception as e:
+            print(f"❌ 2024 popular search failed: {e}")
+    
+    # Strategy 4: Generic popular music search
+    if len(all_tracks) < limit:
+        print(f"🔍 Fallback strategy 4: Searching for general popular music")
+        try:
+            popular_terms = ["pop", "hits", "top", "popular", "trending"]
+            
+            for term in popular_terms:
+                if len(all_tracks) >= limit:
+                    break
+                    
+                params = {
+                    "q": term,
+                    "type": "track",
+                    "limit": 20,
+                    "market": "US"
+                }
+                
+                res = requests.get(search_url, headers=headers, params=params)
+                if res.status_code == 200:
+                    tracks = extract_tracks_from_search(res.json(), playlist_type)
+                    new_tracks = [t for t in tracks if t not in all_tracks]
+                    all_tracks.extend(new_tracks[:5])  # Limit per term
+                    print(f"✅ '{term}' search found {len(new_tracks[:5])} new tracks")
+        except Exception as e:
+            print(f"❌ Generic popular search failed: {e}")
+    
+    # Strategy 5: Last resort - search for specific popular artists
+    if len(all_tracks) < limit:
+        print(f"🔍 Fallback strategy 5: Searching for tracks by popular artists")
+        popular_artists = ["Taylor Swift", "Ed Sheeran", "Ariana Grande", "Drake", "Billie Eilish"]
+        
+        for artist in popular_artists:
+            if len(all_tracks) >= limit:
+                break
+                
+            try:
+                params = {
+                    "q": f"artist:{artist}",
+                    "type": "track",
+                    "limit": 5,
+                    "market": "US"
+                }
+                
+                res = requests.get(search_url, headers=headers, params=params)
+                if res.status_code == 200:
+                    tracks = extract_tracks_from_search(res.json(), playlist_type)
+                    new_tracks = [t for t in tracks if t not in all_tracks]
+                    all_tracks.extend(new_tracks[:3])  # Max 3 per artist
+                    print(f"✅ {artist} search found {len(new_tracks[:3])} new tracks")
+            except Exception as e:
+                print(f"❌ {artist} search failed: {e}")
+    
+    result = all_tracks[:limit]
+    print(f"✅ Total fallback search result: {len(result)} tracks")
+    return result
+
+def extract_tracks_from_search(search_response, playlist_type="clean"):
+    """Extract track URIs from Spotify search response"""
+    tracks = []
+    
+    try:
+        if not isinstance(search_response, dict):
+            return tracks
+        
+        tracks_data = search_response.get("tracks", {})
+        if not isinstance(tracks_data, dict):
+            return tracks
+        
+        items = tracks_data.get("items", [])
+        if not isinstance(items, list):
+            return tracks
+        
+        for track in items:
+            if not isinstance(track, dict):
+                continue
+            
+            # Check explicit content
+            is_explicit = track.get("explicit", False)
+            if playlist_type.lower() == "clean" and is_explicit:
+                continue
+            elif playlist_type.lower() == "explicit" and not is_explicit:
+                continue
+            
+            # Get track URI
+            track_uri = track.get("uri")
+            if track_uri and track_uri.startswith("spotify:track:"):
+                tracks.append(track_uri)
+        
+        return tracks
+        
+    except Exception as e:
+        print(f"❌ Error extracting tracks from search: {e}")
+        return tracks
+
+# Also add this function to handle the 404 recommendations error:
+def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
+    """Get recommendations from Spotify with better error handling"""
+    rec_url = "https://api.spotify.com/v1/recommendations"
+    
+    # Ensure we have at least one seed
+    total_seeds = 0
+    if seed_genres:
+        total_seeds += len(seed_genres)
+    if seed_artists:
+        total_seeds += len(seed_artists)
+    
+    if total_seeds == 0:
+        print("⚠️ No seeds available for recommendations, using default")
+        seed_genres = ["pop"]
     
     params = {
-        "q": query,
-        "type": "track",
-        "limit": min(limit, 50),
+        "limit": min(limit, 100),  # Increase limit to get more options
         "market": "US"
     }
     
+    # Add seeds carefully (max 5 total)
+    seeds_used = 0
+    
+    if seed_genres and seeds_used < 5:
+        genres_to_use = seed_genres[:min(2, 5 - seeds_used)]
+        # Ensure genres are valid
+        valid_genres = [g for g in genres_to_use if g in SPOTIFY_VALID_GENRES]
+        if valid_genres:
+            params["seed_genres"] = ",".join(valid_genres)
+            seeds_used += len(valid_genres)
+            print(f"🎵 Using genre seeds: {valid_genres}")
+        else:
+            # Fallback to pop if no valid genres
+            params["seed_genres"] = "pop"
+            seeds_used += 1
+            print(f"🎵 Using fallback genre seed: pop")
+    
+    if seed_artists and seeds_used < 5:
+        artists_to_use = seed_artists[:min(1, 5 - seeds_used)]
+        params["seed_artists"] = ",".join(artists_to_use)
+        seeds_used += len(artists_to_use)
+        print(f"🎤 Using artist seeds: {artists_to_use}")
+    
+    # Add mood parameters (only basic ones)
+    if mood_params and isinstance(mood_params, dict):
+        # Only add the most reliable mood parameters
+        if "target_energy" in mood_params:
+            params["target_energy"] = min(max(mood_params["target_energy"], 0), 1)
+        if "target_valence" in mood_params:
+            params["target_valence"] = min(max(mood_params["target_valence"], 0), 1)
+        print(f"😊 Using mood params: energy={params.get('target_energy')}, valence={params.get('target_valence')}")
+    
+    print(f"🎯 Recommendations API call with {seeds_used} seeds")
+    print(f"📝 Full params: {params}")
+    
     try:
-        res = requests.get(search_url, headers=headers, params=params)
+        res = requests.get(rec_url, headers=headers, params=params, timeout=15)
+        
+        print(f"📡 Recommendations response: {res.status_code}")
         
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, dict):
-                tracks_data = data.get("tracks", {})
-                if isinstance(tracks_data, dict):
-                    tracks = tracks_data.get("items", [])
-                    
-                    track_uris = []
-                    for track in tracks:
-                        if not isinstance(track, dict):
-                            continue
-                            
-                        is_explicit = track.get("explicit", False)
-                        
-                        # Filter by explicit content
-                        if playlist_type.lower() == "clean" and is_explicit:
-                            continue
-                        elif playlist_type.lower() == "explicit" and not is_explicit:
-                            continue
-                        
-                        track_uri = track.get("uri")
-                        if track_uri:
-                            track_uris.append(track_uri)
-                            
-                        if len(track_uris) >= limit:
-                            break
-                    
-                    print(f"✅ Fallback search: Found {len(track_uris)} tracks")
-                    return track_uris
+                tracks = data.get("tracks", [])
+                track_uris = [track["uri"] for track in tracks if isinstance(track, dict) and "uri" in track]
+                print(f"✅ Recommendations SUCCESS: Got {len(track_uris)} tracks")
+                return track_uris
+            else:
+                print(f"❌ Invalid recommendations response format")
+                return []
+        else:
+            print(f"❌ Recommendations failed: {res.status_code}")
+            if res.text:
+                print(f"❌ Error details: {res.text[:200]}")
+            return []
     except Exception as e:
-        print(f"❌ Error in fallback search: {e}")
-    
-    return []
+        print(f"❌ Exception in recommendations: {e}")
+        return []
+
+# Replace the search_spotify_tracks_enhanced function in moodque_engine.py with this version:
 
 def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean", 
                                  favorite_artist=None, use_lastfm=False):
-    """Enhanced search without Last.fm for now"""
+    """Enhanced search with multiple fallback strategies"""
     try:
-        print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}")
+        print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}, Limit: {limit}")
         
         # Parse genres
         if isinstance(genre, str) and ',' in genre:
             spotify_genres = parse_genre_list(genre)
         else:
             spotify_genre = sanitize_genre(genre) if genre else "pop"
-            spotify_genres = [spotify_genre]
+            spotify_genres = [spotify_genre] if spotify_genre else ["pop"]
+        
+        print(f"🎵 Using genres: {spotify_genres}")
         
         # Get artist IDs
         artist_ids = []
         if favorite_artist:
             try:
                 artist_ids = get_artist_ids(favorite_artist, headers)
+                print(f"🎤 Found {len(artist_ids)} artist IDs")
             except Exception as e:
                 print(f"⚠️ Artist lookup failed: {e}")
         
@@ -441,17 +636,18 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         if mood_tags:
             try:
                 mood_params = get_enhanced_mood_values(mood_tags)
+                print(f"😊 Mood parameters: {mood_params}")
             except Exception as e:
                 print(f"⚠️ Mood params failed: {e}")
         
         all_tracks = []
         
         # Strategy 1: Try recommendations API
-        print("🎯 Trying Recommendations API...")
+        print("🎯 Strategy 1: Trying Spotify Recommendations API...")
         try:
             rec_tracks = get_recommendations_enhanced(
                 headers=headers,
-                limit=limit,
+                limit=limit * 2,  # Get more recommendations to have options
                 seed_genres=spotify_genres,
                 seed_artists=artist_ids,
                 mood_params=mood_params
@@ -460,41 +656,181 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             if rec_tracks:
                 all_tracks.extend(rec_tracks)
                 print(f"✅ Got {len(rec_tracks)} tracks from recommendations")
+            else:
+                print("⚠️ Recommendations returned no tracks")
         except Exception as e:
             print(f"⚠️ Recommendations failed: {e}")
         
-        # Strategy 2: Fallback to search if needed
-        if len(all_tracks) < limit * 0.7:
-            print("🔄 Using search fallback...")
+        # Strategy 2: Search for specific artists' popular tracks
+        if favorite_artist and len(all_tracks) < limit:
+            print(f"🎯 Strategy 2: Searching for popular tracks by {favorite_artist}")
             try:
+                artist_tracks = search_artist_popular_tracks(favorite_artist, headers, limit // 2)
+                if artist_tracks:
+                    # Remove duplicates
+                    new_tracks = [t for t in artist_tracks if t not in all_tracks]
+                    all_tracks.extend(new_tracks)
+                    print(f"✅ Got {len(new_tracks)} tracks from artist search")
+            except Exception as e:
+                print(f"⚠️ Artist popular tracks search failed: {e}")
+        
+        # Strategy 3: Use improved fallback search
+        if len(all_tracks) < limit:
+            print("🎯 Strategy 3: Using improved fallback search...")
+            try:
+                needed_tracks = limit - len(all_tracks)
                 fallback_tracks = search_spotify_tracks_fallback(
-                    spotify_genres[0], 
+                    spotify_genres[0] if spotify_genres else "pop", 
                     headers, 
-                    limit - len(all_tracks),
+                    needed_tracks * 2,  # Get more than needed
                     mood_tags, 
                     search_keywords, 
                     playlist_type
                 )
                 if fallback_tracks:
-                    all_tracks.extend(fallback_tracks)
-                    print(f"✅ Got {len(fallback_tracks)} tracks from fallback")
+                    # Remove duplicates
+                    new_tracks = [t for t in fallback_tracks if t not in all_tracks]
+                    all_tracks.extend(new_tracks)
+                    print(f"✅ Got {len(new_tracks)} tracks from fallback")
+                else:
+                    print("⚠️ Fallback search returned no tracks")
             except Exception as e:
                 print(f"⚠️ Fallback search failed: {e}")
         
-        # Return the tracks (limit them)
-        result = all_tracks[:limit] if isinstance(all_tracks, list) else []
-        print(f"✅ Enhanced search complete: {len(result)} tracks")
+        # Strategy 4: Emergency fallback - just search for popular music
+        if len(all_tracks) < 5:  # If we have very few tracks
+            print("🚨 Strategy 4: Emergency fallback - searching for any popular music")
+            try:
+                emergency_tracks = emergency_track_search(headers, limit, playlist_type)
+                if emergency_tracks:
+                    new_tracks = [t for t in emergency_tracks if t not in all_tracks]
+                    all_tracks.extend(new_tracks)
+                    print(f"✅ Got {len(new_tracks)} tracks from emergency search")
+            except Exception as e:
+                print(f"⚠️ Emergency search failed: {e}")
+        
+        # Final result
+        result = all_tracks[:limit] if all_tracks else []
+        print(f"✅ Enhanced search complete: {len(result)} tracks total")
+        
+        if not result:
+            print("❌ No tracks found in any search strategy!")
+            
         return result
         
     except Exception as e:
-        print(f"❌ Error in enhanced search: {e}")
-        # Ultimate fallback
+        print(f"❌ Critical error in enhanced search: {e}")
+        # Last resort - try emergency search
         try:
-            fallback = search_spotify_tracks_fallback("pop", headers, limit, mood_tags, search_keywords, playlist_type)
-            return fallback if isinstance(fallback, list) else []
-        except Exception as e:
-            print(f"❌ Ultimate fallback failed: {e}")
+            return emergency_track_search(headers, limit, playlist_type)
+        except Exception as e2:
+            print(f"❌ Emergency search also failed: {e2}")
             return []
+
+def search_artist_popular_tracks(artist_name, headers, limit=10):
+    """Search for an artist's popular tracks directly on Spotify"""
+    try:
+        print(f"🎤 Searching for popular tracks by: {artist_name}")
+        
+        # First find the artist
+        search_url = "https://api.spotify.com/v1/search"
+        params = {
+            "q": f"artist:\"{artist_name}\"",  # Use quotes for exact match
+            "type": "artist",
+            "limit": 1
+        }
+        
+        res = requests.get(search_url, headers=headers, params=params)
+        if res.status_code != 200:
+            print(f"❌ Artist search failed: {res.status_code}")
+            return []
+        
+        data = res.json()
+        artists = data.get("artists", {}).get("items", [])
+        if not artists:
+            print(f"❌ Artist not found: {artist_name}")
+            return []
+        
+        artist_id = artists[0]["id"]
+        print(f"✅ Found artist {artist_name} with ID: {artist_id}")
+        
+        # Get artist's top tracks
+        top_tracks_url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
+        params = {"market": "US"}
+        
+        res = requests.get(top_tracks_url, headers=headers, params=params)
+        if res.status_code != 200:
+            print(f"❌ Top tracks request failed: {res.status_code}")
+            return []
+        
+        data = res.json()
+        tracks = data.get("tracks", [])
+        
+        track_uris = []
+        for track in tracks[:limit]:
+            if isinstance(track, dict) and "uri" in track:
+                track_uris.append(track["uri"])
+        
+        print(f"✅ Found {len(track_uris)} popular tracks for {artist_name}")
+        return track_uris
+        
+    except Exception as e:
+        print(f"❌ Error searching artist popular tracks: {e}")
+        return []
+
+def emergency_track_search(headers, limit, playlist_type="clean"):
+    """Emergency search for when all else fails"""
+    try:
+        print("🚨 Running emergency track search...")
+        
+        search_url = "https://api.spotify.com/v1/search"
+        
+        # Try multiple simple search terms
+        search_terms = [
+            "top hits",
+            "popular songs", 
+            "chart toppers",
+            "best songs",
+            "trending music",
+            "hit songs",
+            "popular music",
+            "top 40"
+        ]
+        
+        all_tracks = []
+        
+        for term in search_terms:
+            if len(all_tracks) >= limit:
+                break
+                
+            try:
+                params = {
+                    "q": term,
+                    "type": "track",
+                    "limit": 20,
+                    "market": "US"
+                }
+                
+                res = requests.get(search_url, headers=headers, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    tracks = extract_tracks_from_search(data, playlist_type)
+                    
+                    # Add unique tracks
+                    for track in tracks:
+                        if track not in all_tracks and len(all_tracks) < limit:
+                            all_tracks.append(track)
+                    
+                    print(f"✅ Emergency term '{term}' found {len(tracks)} tracks")
+            except Exception as e:
+                print(f"❌ Emergency term '{term}' failed: {e}")
+        
+        print(f"🚨 Emergency search result: {len(all_tracks)} tracks")
+        return all_tracks
+        
+    except Exception as e:
+        print(f"❌ Emergency search completely failed: {e}")
+        return []
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
                                    playlist_type, favorite_artist, request_id=None):
