@@ -832,6 +832,8 @@ def emergency_track_search(headers, limit, playlist_type="clean"):
         print(f"❌ Emergency search completely failed: {e}")
         return []
 
+# Replace the build_smart_playlist_enhanced function in moodque_engine.py with this fixed version:
+
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
                                    playlist_type, favorite_artist, request_id=None):
     print(f"[{request_id}] 🎧 Building playlist for event: '{event_name}'")
@@ -839,7 +841,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"[{request_id}] 🎭 Mood Tag: {mood_tags}")
     print(f"[{request_id}] 🧠 Search Keywords: {search_keywords}")
     print(f"[{request_id}] 🌟 Favorite Artist(s): {favorite_artist}")
-    print(f"[{request_id}] 🎯 Target Track Count: {time}")
+    print(f"[{request_id}] ⏰ Target Duration: {time} minutes")
     print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
 
     if favorite_artist:
@@ -848,30 +850,26 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     try:
         access_token = refresh_access_token()
         headers = {"Authorization": f"Bearer {access_token}"}
-        track_limit = int(time) if time else 20
+        
+        # Convert time to target duration in milliseconds (average song is ~3.5 minutes)
+        target_duration_minutes = int(time) if time else 30
+        estimated_track_count = max(10, int(target_duration_minutes / 3.5))  # Rough estimate
+        max_tracks = min(estimated_track_count * 2, 100)  # Get more options, limit to 100
+        
+        print(f"[{request_id}] 🎯 Target: {target_duration_minutes} minutes (~{estimated_track_count} tracks)")
 
-        track_items = search_spotify_tracks_enhanced(
+        track_items = search_spotify_tracks_enhanced_with_duration(
             genre=genre,
             headers=headers,
-            limit=track_limit,
+            target_duration_minutes=target_duration_minutes,
+            max_tracks=max_tracks,
             mood_tags=mood_tags,
             search_keywords=search_keywords,
             playlist_type=playlist_type,
-            favorite_artist=favorite_artist,
-            use_lastfm=False  # Disabled for now
+            favorite_artist=favorite_artist
         )
 
-        # ✅ Defensive conversion to ensure all values are valid Spotify URIs
-        track_uris = []
-        for t in track_items:
-            if isinstance(t, dict) and "uri" in t:
-                track_uris.append(t["uri"])
-            elif isinstance(t, str) and "spotify:track:" in t:
-                track_uris.append(t)
-            else:
-                print(f"[{request_id}] ⚠️ Skipping malformed track item: {t}")
-
-        if not track_uris:
+        if not track_items:
             print(f"[{request_id}] ❌ No valid tracks found, cannot create playlist")
             return None
 
@@ -885,7 +883,11 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
             print(f"[{request_id}] ❌ Could not create playlist")
             return None
 
-        add_tracks_to_playlist(headers, playlist_id, track_uris)
+        # Add tracks and get final duration
+        success = add_tracks_to_playlist(headers, playlist_id, track_items)
+        if success:
+            final_duration = calculate_playlist_duration(track_items, headers)
+            print(f"[{request_id}] ✅ Final playlist: {len(track_items)} tracks, {final_duration:.1f} minutes")
 
         playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
         print(f"[{request_id}] ✅ Playlist created: {playlist_url}")
@@ -894,3 +896,355 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     except Exception as e:
         print(f"[{request_id}] ❌ Error building playlist: {e}")
         return None
+
+def search_spotify_tracks_enhanced_with_duration(genre, headers, target_duration_minutes=30, max_tracks=50, 
+                                               mood_tags=None, search_keywords=None, playlist_type="clean", 
+                                               favorite_artist=None):
+    """Enhanced search that prioritizes quality and manages duration"""
+    try:
+        print(f"🔍 Enhanced search with duration - Target: {target_duration_minutes} minutes")
+        
+        # Parse genres
+        if isinstance(genre, str) and ',' in genre:
+            spotify_genres = parse_genre_list(genre)
+        else:
+            spotify_genre = sanitize_genre(genre) if genre else "pop"
+            spotify_genres = [spotify_genre] if spotify_genre else ["pop"]
+        
+        print(f"🎵 Using genres: {spotify_genres}")
+        
+        # Get artist IDs
+        artist_ids = []
+        if favorite_artist:
+            try:
+                artist_ids = get_artist_ids(favorite_artist, headers)
+                print(f"🎤 Found {len(artist_ids)} artist IDs")
+            except Exception as e:
+                print(f"⚠️ Artist lookup failed: {e}")
+        
+        # Get mood parameters
+        mood_params = {}
+        if mood_tags:
+            try:
+                mood_params = get_enhanced_mood_values(mood_tags)
+                print(f"😊 Mood parameters: {mood_params}")
+            except Exception as e:
+                print(f"⚠️ Mood params failed: {e}")
+        
+        all_tracks = []
+        current_duration = 0
+        target_duration_ms = target_duration_minutes * 60 * 1000
+        
+        # Priority 1: Get tracks from favorite artists (higher weight)
+        if favorite_artist and current_duration < target_duration_ms * 0.8:
+            print("🎯 Priority 1: Searching for favorite artist tracks...")
+            try:
+                artist_tracks = search_artist_popular_tracks_with_duration(
+                    favorite_artist, headers, min(15, max_tracks // 3)
+                )
+                if artist_tracks:
+                    for track_data in artist_tracks:
+                        if current_duration >= target_duration_ms:
+                            break
+                        all_tracks.append(track_data['uri'])
+                        current_duration += track_data['duration_ms']
+                    
+                    print(f"✅ Added {len(artist_tracks)} tracks from favorite artists")
+                    print(f"📊 Current duration: {current_duration / 60000:.1f} minutes")
+            except Exception as e:
+                print(f"⚠️ Favorite artist search failed: {e}")
+        
+        # Priority 2: Try recommendations (but limit quantity)
+        if current_duration < target_duration_ms * 0.9:
+            print("🎯 Priority 2: Getting recommendations...")
+            try:
+                rec_tracks = get_recommendations_enhanced(
+                    headers=headers,
+                    limit=min(20, max_tracks // 2),
+                    seed_genres=spotify_genres,
+                    seed_artists=artist_ids,
+                    mood_params=mood_params
+                )
+                
+                if rec_tracks:
+                    # Get duration info for recommendations
+                    rec_with_duration = get_tracks_with_duration(rec_tracks, headers)
+                    
+                    for track_data in rec_with_duration:
+                        if current_duration >= target_duration_ms:
+                            break
+                        if track_data['uri'] not in all_tracks:  # Avoid duplicates
+                            all_tracks.append(track_data['uri'])
+                            current_duration += track_data['duration_ms']
+                    
+                    print(f"✅ Added {len(rec_with_duration)} tracks from recommendations")
+                    print(f"📊 Current duration: {current_duration / 60000:.1f} minutes")
+            except Exception as e:
+                print(f"⚠️ Recommendations failed: {e}")
+        
+        # Priority 3: High-quality fallback search (only if needed)
+        if current_duration < target_duration_ms * 0.8:
+            print("🎯 Priority 3: High-quality fallback search...")
+            try:
+                needed_duration = target_duration_ms - current_duration
+                needed_tracks = max(5, int(needed_duration / (3.5 * 60 * 1000)))  # Estimate tracks needed
+                
+                fallback_tracks = search_high_quality_tracks(
+                    spotify_genres[0], headers, needed_tracks, mood_tags, search_keywords, playlist_type
+                )
+                
+                if fallback_tracks:
+                    fallback_with_duration = get_tracks_with_duration(fallback_tracks, headers)
+                    
+                    for track_data in fallback_with_duration:
+                        if current_duration >= target_duration_ms:
+                            break
+                        if track_data['uri'] not in all_tracks:  # Avoid duplicates
+                            all_tracks.append(track_data['uri'])
+                            current_duration += track_data['duration_ms']
+                    
+                    print(f"✅ Added {len(fallback_with_duration)} tracks from fallback")
+                    print(f"📊 Final duration: {current_duration / 60000:.1f} minutes")
+            except Exception as e:
+                print(f"⚠️ Fallback search failed: {e}")
+        
+        print(f"✅ Search complete: {len(all_tracks)} tracks, {current_duration / 60000:.1f} minutes")
+        return all_tracks
+        
+    except Exception as e:
+        print(f"❌ Critical error in enhanced search: {e}")
+        return []
+
+def search_artist_popular_tracks_with_duration(artist_name, headers, limit=10):
+    """Search for an artist's popular tracks and include duration info"""
+    try:
+        print(f"🎤 Searching for popular tracks by: {artist_name}")
+        
+        # Handle multiple artists
+        if isinstance(artist_name, str) and ',' in artist_name:
+            artists = [a.strip() for a in artist_name.split(',')]
+        else:
+            artists = [artist_name]
+        
+        all_track_data = []
+        tracks_per_artist = max(1, limit // len(artists))
+        
+        for artist in artists[:3]:  # Limit to 3 artists
+            try:
+                # Find the artist
+                search_url = "https://api.spotify.com/v1/search"
+                params = {
+                    "q": f"artist:\"{artist}\"",
+                    "type": "artist",
+                    "limit": 1
+                }
+                
+                res = requests.get(search_url, headers=headers, params=params)
+                if res.status_code != 200:
+                    continue
+                
+                data = res.json()
+                artists_data = data.get("artists", {}).get("items", [])
+                if not artists_data:
+                    continue
+                
+                artist_id = artists_data[0]["id"]
+                print(f"✅ Found artist {artist} with ID: {artist_id}")
+                
+                # Get artist's top tracks
+                top_tracks_url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
+                params = {"market": "US"}
+                
+                res = requests.get(top_tracks_url, headers=headers, params=params)
+                if res.status_code != 200:
+                    continue
+                
+                data = res.json()
+                tracks = data.get("tracks", [])
+                
+                for track in tracks[:tracks_per_artist]:
+                    if isinstance(track, dict) and "uri" in track:
+                        track_info = {
+                            'uri': track["uri"],
+                            'duration_ms': track.get("duration_ms", 210000),  # Default 3.5 min
+                            'name': track.get("name", "Unknown"),
+                            'artist': artist
+                        }
+                        all_track_data.append(track_info)
+                
+                print(f"✅ Found {len(tracks[:tracks_per_artist])} tracks for {artist}")
+                
+            except Exception as e:
+                print(f"❌ Error with artist {artist}: {e}")
+                continue
+        
+        print(f"✅ Total artist tracks found: {len(all_track_data)}")
+        return all_track_data
+        
+    except Exception as e:
+        print(f"❌ Error searching artist popular tracks: {e}")
+        return []
+
+def get_tracks_with_duration(track_uris, headers):
+    """Get track duration information for a list of URIs"""
+    try:
+        track_data = []
+        
+        # Process in batches of 50 (Spotify API limit)
+        batch_size = 50
+        for i in range(0, len(track_uris), batch_size):
+            batch_uris = track_uris[i:i + batch_size]
+            track_ids = [uri.split(":")[-1] for uri in batch_uris if isinstance(uri, str)]
+            
+            if not track_ids:
+                continue
+            
+            res = requests.get("https://api.spotify.com/v1/tracks", 
+                              headers=headers, 
+                              params={"ids": ",".join(track_ids)})
+            
+            if res.status_code == 200:
+                data = res.json()
+                tracks = data.get("tracks", [])
+                
+                for j, track in enumerate(tracks):
+                    if track and isinstance(track, dict):
+                        track_info = {
+                            'uri': batch_uris[j] if j < len(batch_uris) else track.get("uri"),
+                            'duration_ms': track.get("duration_ms", 210000),
+                            'name': track.get("name", "Unknown"),
+                            'artist': track.get("artists", [{}])[0].get("name", "Unknown")
+                        }
+                        track_data.append(track_info)
+        
+        return track_data
+        
+    except Exception as e:
+        print(f"❌ Error getting track durations: {e}")
+        return []
+
+def search_high_quality_tracks(genre, headers, limit=20, mood_tags=None, 
+                              search_keywords=None, playlist_type="clean"):
+    """Search for high-quality tracks with better filtering"""
+    try:
+        search_url = "https://api.spotify.com/v1/search"
+        
+        # Build high-quality search queries
+        queries = []
+        
+        # Query 1: Year-based search for recent hits
+        queries.append(f"year:2023-2024 genre:{genre}")
+        queries.append(f"year:2022-2023 genre:{genre}")
+        
+        # Query 2: Mood-based search
+        if mood_tags:
+            queries.append(f"{mood_tags} {genre}")
+        
+        # Query 3: Keyword search
+        if search_keywords:
+            queries.append(f"{search_keywords} {genre}")
+        
+        # Query 4: Popular artists in genre
+        genre_artists = {
+            "pop": ["Dua Lipa", "Olivia Rodrigo", "Harry Styles"],
+            "hip-hop": ["Drake", "Kendrick Lamar", "Travis Scott"],
+            "indie": ["Arctic Monkeys", "Tame Impala", "The 1975"],
+            "rock": ["Imagine Dragons", "OneRepublic", "Maroon 5"]
+        }
+        
+        if genre in genre_artists:
+            for artist in genre_artists[genre]:
+                queries.append(f"artist:\"{artist}\"")
+        
+        all_tracks = []
+        tracks_per_query = max(2, limit // len(queries))
+        
+        for query in queries:
+            if len(all_tracks) >= limit:
+                break
+                
+            try:
+                params = {
+                    "q": query,
+                    "type": "track",
+                    "limit": min(tracks_per_query * 2, 20),
+                    "market": "US"
+                }
+                
+                res = requests.get(search_url, headers=headers, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    tracks = extract_tracks_from_search(data, playlist_type)
+                    
+                    # Filter out low-quality tracks
+                    quality_tracks = filter_track_quality(tracks, headers)
+                    
+                    # Add unique tracks
+                    for track in quality_tracks[:tracks_per_query]:
+                        if track not in all_tracks and len(all_tracks) < limit:
+                            all_tracks.append(track)
+                    
+                    print(f"✅ Query '{query[:30]}...' found {len(quality_tracks)} quality tracks")
+                    
+            except Exception as e:
+                print(f"❌ Query failed: {e}")
+                continue
+        
+        print(f"✅ High-quality search result: {len(all_tracks)} tracks")
+        return all_tracks
+        
+    except Exception as e:
+        print(f"❌ High-quality search failed: {e}")
+        return []
+
+def filter_track_quality(track_uris, headers):
+    """Filter out low-quality tracks (instrumentals, very short/long tracks, etc.)"""
+    try:
+        if not track_uris:
+            return []
+        
+        quality_tracks = []
+        
+        # Get track details
+        track_data = get_tracks_with_duration(track_uris, headers)
+        
+        for track in track_data:
+            # Filter criteria
+            duration_ms = track['duration_ms']
+            name = track['name'].lower()
+            artist = track['artist'].lower()
+            
+            # Skip very short or very long tracks
+            if duration_ms < 60000 or duration_ms > 420000:  # 1-7 minutes
+                continue
+            
+            # Skip obvious instrumental/generic tracks
+            skip_keywords = [
+                'instrumental', 'karaoke', 'meditation', 'sleep', 'study music',
+                'background music', 'royalty free', 'no copyright', 'clean pop music',
+                'instrumentals for', 'upbeat study'
+            ]
+            
+            if any(keyword in name for keyword in skip_keywords):
+                continue
+            
+            if any(keyword in artist for keyword in skip_keywords):
+                continue
+            
+            quality_tracks.append(track['uri'])
+        
+        return quality_tracks
+        
+    except Exception as e:
+        print(f"❌ Error filtering track quality: {e}")
+        return track_uris  # Return original if filtering fails
+
+def calculate_playlist_duration(track_uris, headers):
+    """Calculate total playlist duration in minutes"""
+    try:
+        track_data = get_tracks_with_duration(track_uris, headers)
+        total_ms = sum(track['duration_ms'] for track in track_data)
+        return total_ms / 60000  # Convert to minutes
+    except Exception as e:
+        print(f"❌ Error calculating duration: {e}")
+        return 0
