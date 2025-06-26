@@ -556,38 +556,63 @@ def filter_explicit_content(track_uris, headers, playlist_type):
     print(f"🔍 Content filter: {len(track_uris)} → {len(filtered_uris)} tracks ({playlist_type})")
     return filtered_uris
 
+# Add this updated function to your moodque_engine.py
+
 def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
                                  search_keywords=None, playlist_type="clean", 
                                  favorite_artist=None, use_lastfm=False):
-    """Enhanced search with optional Last.fm fallback, mood filtering, and Spotify recommendations."""
+    """Enhanced search with improved Last.fm fallback and better error handling"""
     try:
         print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}")
         
-        # Last.fm Strategy
+        # Last.fm Strategy (with improved fallback)
         if use_lastfm and favorite_artist:
-            print(f"🎯 Using Last.fm + Spotify search for: {favorite_artist}")
+            print(f"🎯 Attempting Last.fm + Spotify search for: {favorite_artist}")
             try:
-                from lastfm_helpers import get_similar_artists, get_top_tracks
+                from lastfm_helpers import get_similar_artists, get_top_tracks, test_lastfm_connection
                 from moodque_utilities import search_spotify_track
 
-                artist_list = [favorite_artist] + get_similar_artists(favorite_artist, limit=5)
-                all_candidates = []
-                for artist in artist_list:
-                    all_candidates += get_top_tracks(artist, limit=3)
+                # First test if Last.fm is working
+                if not test_lastfm_connection():
+                    print("⚠️ Last.fm API test failed, skipping Last.fm strategy")
+                else:
+                    # Try to get similar artists
+                    similar_artists = get_similar_artists(favorite_artist, limit=5)
+                    artist_list = [favorite_artist] + similar_artists
+                    
+                    print(f"🎤 Artist list for search: {artist_list}")
+                    
+                    all_candidates = []
+                    for artist in artist_list[:6]:  # Limit to 6 artists
+                        tracks = get_top_tracks(artist, limit=3)
+                        all_candidates.extend(tracks)
+                        if len(all_candidates) >= limit * 2:  # Get more candidates than needed
+                            break
 
-                all_tracks = []
-                for title, artist in all_candidates:
-                    uri = search_spotify_track(artist, title, headers)
-                    if uri:
-                        all_tracks.append(uri)
-                    if len(all_tracks) >= limit:
-                        break
+                    print(f"🎼 Total track candidates from Last.fm: {len(all_candidates)}")
+                    
+                    all_tracks = []
+                    for title, artist in all_candidates[:limit * 2]:  # Try more than we need
+                        uri = search_spotify_track(artist, title, headers)
+                        if uri:
+                            all_tracks.append(uri)
+                        if len(all_tracks) >= limit:
+                            break
 
-                print(f"✅ Last.fm + search complete: {len(all_tracks)} tracks")
-                return all_tracks
+                    if all_tracks:
+                        print(f"✅ Last.fm + Spotify search complete: {len(all_tracks)} tracks")
+                        return all_tracks
+                    else:
+                        print("⚠️ Last.fm search found no Spotify matches, falling back to regular search")
+                        
+            except ImportError as e:
+                print(f"❌ Last.fm helpers not available: {e}")
             except Exception as e:
                 print(f"❌ Last.fm search failed: {e}")
 
+        # Regular Spotify Strategy (improved)
+        print("🎯 Using regular Spotify search strategy...")
+        
         # Parse genres
         if isinstance(genre, str) and ',' in genre:
             spotify_genres = parse_genre_list(genre)
@@ -595,11 +620,12 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             spotify_genre = sanitize_genre(genre) if genre else "pop"
             spotify_genres = [spotify_genre]
         
-        # Get artist IDs
+        # Get artist IDs for seed
         artist_ids = []
         if favorite_artist:
             try:
                 artist_ids = get_artist_ids(favorite_artist, headers)
+                print(f"🎤 Found artist IDs: {len(artist_ids)}")
             except Exception as e:
                 print(f"⚠️ Artist lookup failed: {e}")
         
@@ -608,13 +634,14 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         if mood_tags:
             try:
                 mood_params = get_enhanced_mood_values(mood_tags)
+                print(f"😊 Mood parameters: {mood_params}")
             except Exception as e:
                 print(f"⚠️ Mood params failed: {e}")
         
         all_tracks = []
         
         # Strategy 1: Try recommendations API
-        print("🎯 Trying Recommendations API...")
+        print("🎯 Trying Spotify Recommendations API...")
         try:
             rec_tracks = get_recommendations_enhanced(
                 headers=headers,
@@ -630,9 +657,20 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
         except Exception as e:
             print(f"⚠️ Recommendations failed: {e}")
         
-        # Strategy 2: Fallback to search if needed
+        # Strategy 2: Search for favorite artist's popular songs if we have one
+        if favorite_artist and len(all_tracks) < limit * 0.5:
+            print(f"🎯 Searching for popular tracks by {favorite_artist}...")
+            try:
+                artist_search_tracks = search_artist_popular_tracks(favorite_artist, headers, limit // 2)
+                if artist_search_tracks:
+                    all_tracks.extend(artist_search_tracks)
+                    print(f"✅ Got {len(artist_search_tracks)} tracks from artist search")
+            except Exception as e:
+                print(f"⚠️ Artist popular tracks search failed: {e}")
+        
+        # Strategy 3: Fallback to general search if needed
         if len(all_tracks) < limit * 0.7:
-            print("🔄 Using search fallback...")
+            print("🔄 Using general search fallback...")
             try:
                 fallback_tracks = search_spotify_tracks_fallback(
                     spotify_genres[0], 
@@ -648,7 +686,7 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             except Exception as e:
                 print(f"⚠️ Fallback search failed: {e}")
         
-        # Deduping
+        # Deduping and filtering
         if len(all_tracks) > limit:
             try:
                 filtered_tracks = remove_duplicates_and_filter(all_tracks, headers)
@@ -679,65 +717,48 @@ def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None,
             print(f"❌ Ultimate fallback failed: {e}")
             return []
 
-def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
-                                   playlist_type, favorite_artist, request_id=None):
-    print(f"[{request_id}] 🎧 Building playlist for event: '{event_name}'")
-    print(f"[{request_id}] 🔥 Genre Input: {genre}")
-    print(f"[{request_id}] 🎭 Mood Tag: {mood_tags}")
-    print(f"[{request_id}] 🧠 Search Keywords: {search_keywords}")
-    print(f"[{request_id}] 🌟 Favorite Artist(s): {favorite_artist}")
-    print(f"[{request_id}] 🎯 Target Track Count: {time}")
-    print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
-
-    if favorite_artist:
-        favorite_artist = favorite_artist.replace("'", "'").strip()
-
+def search_artist_popular_tracks(artist_name, headers, limit=10):
+    """Search for an artist's popular tracks directly on Spotify"""
     try:
-        access_token = refresh_access_token()
-        headers = {"Authorization": f"Bearer {access_token}"}
-        track_limit = int(time) if time else 20
-
-        track_items = search_spotify_tracks_enhanced(
-            genre=genre,
-            headers=headers,
-            limit=track_limit,
-            mood_tags=mood_tags,
-            search_keywords=search_keywords,
-            playlist_type=playlist_type,
-            favorite_artist=favorite_artist,
-            use_lastfm=True
-        )
-
-        # ✅ Defensive conversion to ensure all values are valid Spotify URIs
+        # First find the artist
+        search_url = "https://api.spotify.com/v1/search"
+        params = {
+            "q": f"artist:{artist_name}",
+            "type": "artist",
+            "limit": 1
+        }
+        
+        res = requests.get(search_url, headers=headers, params=params)
+        if res.status_code != 200:
+            return []
+        
+        data = res.json()
+        artists = data.get("artists", {}).get("items", [])
+        if not artists:
+            return []
+        
+        artist_id = artists[0]["id"]
+        print(f"🎤 Found artist {artist_name} with ID: {artist_id}")
+        
+        # Get artist's top tracks
+        top_tracks_url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
+        params = {"market": "US"}
+        
+        res = requests.get(top_tracks_url, headers=headers, params=params)
+        if res.status_code != 200:
+            return []
+        
+        data = res.json()
+        tracks = data.get("tracks", [])
+        
         track_uris = []
-        for t in track_items:
-            if isinstance(t, dict) and "uri" in t:
-                track_uris.append(t["uri"])
-            elif isinstance(t, str) and "spotify:track:" in t:
-                track_uris.append(t)
-            else:
-                print(f"[{request_id}] ⚠️ Skipping malformed track item: {t}")
-
-        if not track_uris:
-            print(f"[{request_id}] ❌ No valid tracks found, cannot create playlist")
-            return None
-
-        user_id = get_spotify_user_id(headers)
-        if not user_id:
-            print(f"[{request_id}] ❌ Could not get user ID")
-            return None
-
-        playlist_id = create_new_playlist(user_id, headers, event_name)
-        if not playlist_id:
-            print(f"[{request_id}] ❌ Could not create playlist")
-            return None
-
-        add_tracks_to_playlist(headers, playlist_id, track_uris)
-
-        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-        print(f"[{request_id}] ✅ Playlist created: {playlist_url}")
-        return playlist_url
+        for track in tracks[:limit]:
+            if isinstance(track, dict) and "uri" in track:
+                track_uris.append(track["uri"])
+        
+        print(f"🎼 Found {len(track_uris)} popular tracks for {artist_name}")
+        return track_uris
         
     except Exception as e:
-        print(f"[{request_id}] ❌ Error building playlist: {e}")
-        return None
+        print(f"❌ Error searching artist popular tracks: {e}")
+        return []
