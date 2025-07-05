@@ -11,12 +11,12 @@ from moodque_utilities import create_new_playlist
 
 glide_social_bp = Blueprint('glide_social', __name__)
 
-pp = Flask(__name__)
+app = Flask(__name__)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@pp.route("/")
+@app.route("/")
 def index():
     return "MoodQue Webhook is Running"
 
@@ -68,26 +68,24 @@ def glide_social():
     except Exception as e:
         print("❌ Error in glide_social:", str(e))
         return jsonify({"error": str(e)}), 500
-
-
-# --- Glide Playlist Creation Webhook End ---
+    # --- Glide Playlist Creation Webhook End ---
 
     # --- Social & User Profile Endpoints ---
 
-@pp.route("/like_playlist", methods=["POST"])
+@app.route("/like_playlist", methods=["POST"])
 def like_playlist():
     data = request.json
     playlist_id = data.get("playlist_id")
     user_id = data.get("user_id")
     return jsonify({"status": "liked", "playlist_id": playlist_id, "user_id": user_id})
 
-@pp.route("/view_playlist", methods=["POST"])
+@app.route("/view_playlist", methods=["POST"])
 def view_playlist():
     data = request.json
     playlist_id = data.get("playlist_id")
     return jsonify({"status": "viewed", "playlist_id": playlist_id})
 
-@pp.route("/get_user_profile", methods=["POST"])
+@app.route("/get_user_profile", methods=["POST"])
 def get_user_profile():
     data = request.json
     user_email = data.get("email")
@@ -100,11 +98,11 @@ def get_user_profile():
         }
     })
 
-@pp.route("/update_user_profile", methods=["POST"])
+@app.route("/update_user_profile", methods=["POST"])
 def update_user_profile():
     data = request.json
     return jsonify({"status": "updated", "data": data})
 
 
 if __name__ == "__main__":
-    pp.run(debug=True)
+    app.run(debug=True)
