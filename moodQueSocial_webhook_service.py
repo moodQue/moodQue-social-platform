@@ -1,64 +1,83 @@
+import logging
 from flask import Flask, request, jsonify
+from moodque_engine import build_smart_playlist_enhanced  # Adjust path if needed
 import requests
+import os
 
+# --- Flask App Setup ---
 app = Flask(__name__)
+logger = logging.getLogger("moodQueSocial_webhook")
+logging.basicConfig(level=logging.INFO)
 
-@app.route("/", methods=["GET"])
-def index():
-    return "✅ moodQue Social Webhook Service is running!", 200
+# --- Constants ---
+GLIDE_RETURN_WEBHOOK_URL = os.getenv("GLIDE_RETURN_WEBHOOK_URL")  # Set in Railway or .env
 
-@app.route("/glide_social", methods=["POST"])
+# --- Helper Function: Send Result to Glide Webhook ---
+def send_to_glide_return_webhook(row_id, playlist_info):
+    payload = {
+        "row_id": row_id,
+        "playlist_id": playlist_info.get("playlist_id", ""),
+        "spotify_url": playlist_info.get("spotify_url", ""),
+        "spotify_code_url": playlist_info.get("spotify_code_url", ""),
+        "has_code": playlist_info.get("has_code", False),
+        "track_count": playlist_info.get("track_count", 0),
+    }
+
+    try:
+        response = requests.post(GLIDE_RETURN_WEBHOOK_URL, json=payload)
+        logger.info(f"📤 Sent to Glide Return Webhook → Status: {response.status_code}")
+        logger.debug(f"🔁 Glide Response: {response.text}")
+        return response.status_code
+    except Exception as e:
+        logger.exception("❌ Failed to post to Glide Return Webhook")
+        return None
+
+# --- Main Playlist Trigger Route ---
+@app.route('/glide-social', methods=['POST'])
 def glide_social():
     try:
-        payload = request.get_json()
-        data = payload.get("body", {})
+        raw_payload = request.get_json(force=True)
+        logger.info(f"📥 Raw Payload: {raw_payload}")
 
-        print("🎯 Received Payload from Glide:", data)
+        payload = raw_payload.get("body", raw_payload)
+        logger.info(f"📦 Processed Payload: {payload}")
 
-        # Extract expected fields
-        row_id = data.get("row_id")
-        genre = data.get("genre")
-        mood_tags = data.get("mood_tags")
-        event_name = data.get("event_name")
-        playlist_type = data.get("playlist_type")
-        favorite_artist = data.get("favorite_artist")
-        search_keywords = data.get("search_keywords")
-        time = data.get("time")
+        # Extract fields
+        row_id = payload.get("🔒 row_id")  # Your custom Glide column
+        event_name = payload.get("event_name", "").strip()
+        genre = payload.get("genre", "").strip()
+        mood_tags = payload.get("mood_tags", "").strip()
+        favorite_artist = payload.get("favorite_artist", "").strip()
+        search_keywords = payload.get("search_keywords", "").strip()
+        time = payload.get("time", 30)
+        playlist_type = payload.get("playlist_type", "clean")
 
-        print(f"🆔 row_id: {row_id}")
-        print(f"🎵 genre: {genre}")
-        print(f"🏷️ mood_tags: {mood_tags}")
-        print(f"📅 event_name: {event_name}")
-        print(f"🧼 playlist_type: {playlist_type}")
-        print(f"🎤 favorite_artist: {favorite_artist}")
-        print(f"🔍 search_keywords: {search_keywords}")
-        print(f"⏱️ time: {time}")
+        logger.info(f"🎯 Event: {event_name} | 🎼 Genre: {genre} | 🎭 Mood: {mood_tags} | ⏱️ Time: {time}")
 
-        return jsonify({
-            "status": "success",
-            "row_id": row_id,
-            "genre": genre,
-            "mood_tags": mood_tags,
-            "event_name": event_name,
-            "playlist_type": playlist_type,
-            "favorite_artist": favorite_artist,
-            "search_keywords": search_keywords,
-            "time": time
-        }), 200
+        # Build Playlist
+        playlist_info = build_smart_playlist_enhanced(
+            event_name=event_name,
+            genre=genre,
+            time=time,
+            mood_tags=mood_tags,
+            search_keywords=search_keywords,
+            playlist_type=playlist_type,
+            favorite_artist=favorite_artist
+        )
+
+        if not playlist_info:
+            logger.warning("⚠️ Playlist creation failed.")
+            return jsonify({"error": "Playlist creation failed"}), 500
+
+        # Send result to Glide return webhook
+        status = send_to_glide_return_webhook(row_id, playlist_info)
+
+        return jsonify({"message": "Playlist created", "status": status}), 200
 
     except Exception as e:
-        print("❌ Error handling /glide_social:", str(e))
+        logger.exception("🔥 Exception in glide_social")
         return jsonify({"error": str(e)}), 500
 
-# Optional placeholders for future routes
-@app.route("/like_playlist", methods=["POST"])
-def like_playlist():
-    return jsonify({"message": "like_playlist endpoint is live"}), 200
-
-@app.route("/view_playlist", methods=["POST"])
-def view_playlist():
-    return jsonify({"message": "view_playlist endpoint is live"}), 200
-
-@app.route("/get_user_profile", methods=["POST"])
-def get_user_profile():
-    return jsonify({"message": "get_user_profile endpoint is live"}), 200
+# --- Flask App Entry Point ---
+if __name__ == '__main__':
+    app.run(debug=True)
