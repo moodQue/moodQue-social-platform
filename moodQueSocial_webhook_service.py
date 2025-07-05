@@ -62,22 +62,25 @@ def glide_social():
             logger.warning("⚠️ Playlist creation failed, no data returned.")
             return jsonify({"error": "Playlist creation failed"}), 500
         
-        print(f"[DEBUG] playlist_info type: {type(playlist_info)}, value: {playlist_info}")
-        
+        logger.debug(f"[DEBUG] playlist_info type: {type(playlist_info)}, value: {playlist_info}")
+
+        # Determine if playlist_info is a string or dict
         if isinstance(playlist_info, dict):
             playlist_id = playlist_info.get("playlist_id", "")
             spotify_url = playlist_info.get("spotify_url", "")
             spotify_code_url = playlist_info.get("spotify_code_url", "")
+            track_count = playlist_info.get("track_count", 0)
         else:
-            # Fallbacks if playlist_info is a string or unexpected type
-            playlist_id = str(playlist_info)
-            spotify_url = ""
-            spotify_code_url = ""
+            spotify_url = str(playlist_info)
+            playlist_id = spotify_url.split("/")[-1] if "spotify.com/playlist/" in spotify_url else ""
+            spotify_code_url = f"https://scannables.scdn.co/uri/plain/png/000000/white/640/spotify:playlist:{playlist_id}" if playlist_id else ""
+            track_count = 0  # Default fallback if we don’t know actual count
 
         updates = {
             "Playlist ID": playlist_id,
             "Spotify URL": spotify_url,
             "Spotify Code URL": spotify_code_url,
+            "Track Count": track_count
         }
 
         logger.info(f"✅ Playlist created: {updates}")
@@ -86,6 +89,7 @@ def glide_social():
     except Exception as e:
         logger.exception("🔥 Exception during playlist creation")
         return jsonify({"error": str(e)}), 500
+
 # --- Glide Playlist Creation Webhook End ---
 
     # --- Social & User Profile Endpoints ---
