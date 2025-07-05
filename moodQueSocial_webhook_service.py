@@ -20,7 +20,7 @@ def index():
     return "MoodQue Webhook is Running"
 
 # --- Glide Playlist Creation Webhook ---
-@webhook_bp.route('/glide-social', methods=['POST'])
+@app.route('/glide-social', methods=['POST'])
 def handle_glide_webhook():
     try:
         event = request.get_json()
