@@ -21,36 +21,36 @@ def index():
 
 # --- Glide Playlist Creation Webhook ---
 @app.route('/glide-social', methods=['POST'])
-def handle_glide_webhook():
+def glide_social():
     try:
-        event = request.get_json()
-        logger.info(f"📬 Received event: {event}")
+        raw_payload = request.get_json(force=True)
+        logging.info(f"📥 Raw payload: {raw_payload}")
 
-        # Extract nested body payload
-        payload = event.get("body", {})
-        logger.info(f"📫 Payload received: {payload}")
+        # Extract inner body if it's nested
+        payload = raw_payload.get("body", raw_payload)
+        logging.info(f"📦 Processed payload: {payload}")
 
-        # Extract individual fields
-        event_name = payload.get("event_name", "")
-        genres = payload.get("genre", "")
-        mood_tags = payload.get("mood_tags", "")
+        # Extract fields with fallback defaults
+        event_name = payload.get("event_name", "").strip()
+        genre = payload.get("genre", "").strip()
+        mood_tags = payload.get("mood_tags", "").strip()
+        favorite_artist = payload.get("favorite_artist", "").strip()
+        search_keywords = payload.get("search_keywords", "").strip()
         time = payload.get("time", 30)
-        search_keywords = payload.get("search_keywords", "")
-        playlist_type = payload.get("playlist_type", "")
-        favorite_artist = payload.get("favorite_artist", "")
-        row_id = payload.get("row_id", "")
+        playlist_type = payload.get("playlist_type", "clean")
 
-        logger.info(f"🎯 Building playlist for event: {event_name}")
-        logger.info(f"🎶 Genre Input: {genres}")
-        logger.info(f"🧠 Mood Tag: {mood_tags}")
-        logger.info(f"🔍 Search Keywords: {search_keywords}")
-        logger.info(f"💖 Favorite Artist(s): {favorite_artist}")
-        logger.info(f"⏱️ Target Duration: {time} minutes")
-        logger.info(f"🚦 Content Filter: {playlist_type}")
-
+        # ✅ DEBUG PRINT to verify everything
+        logging.info(f"🎯 Building playlist for event: '{event_name}'")
+        logging.info(f"🎼 Genre Input: {genre}")
+        logging.info(f"🎭 Mood Tag: {mood_tags}")
+        logging.info(f"🔍 Search Keywords: {search_keywords}")
+        logging.info(f"🎤 Favorite Artist(s): {favorite_artist}")
+        logging.info(f"⏱️ Target Duration: {time} minutes")
+        logging.info(f"🧼 Content Filter: {playlist_type}")
+        
         playlist_info = build_smart_playlist_enhanced(
             event_name=event_name,
-            genre=genres,
+            genre=genre,
             time=time,
             mood_tags=mood_tags,
             search_keywords=search_keywords,
