@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Blueprint
 from flask import jsonify, request
 import os
 import uuid
@@ -9,105 +9,82 @@ import logging
 from moodque_engine import build_smart_playlist_enhanced
 from moodque_utilities import create_new_playlist
 
+glide_social_bp = Blueprint('glide_social', __name__)
 
-app = Flask(__name__)
+pp = Flask(__name__)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@app.route("/")
+@pp.route("/")
 def index():
     return "MoodQue Webhook is Running"
 
 # --- Glide Playlist Creation Webhook ---
-@app.route('/glide-social', methods=['POST'])
+@glide_social_bp.route('/glide_social', methods=['POST'])
 def glide_social():
     try:
-        raw_payload = request.get_json(force=True)
-        logging.info(f"📥 Raw payload: {raw_payload}")
+        data = request.get_json()
+        print("🔄 Incoming from Glide:", data)
 
-        # Extract inner body if it's nested
-        payload = raw_payload.get("body", raw_payload)
-        logging.info(f"📦 Processed payload: {payload}")
+        # Parse incoming data
+        row_id = data.get("row_id")
+        favorite_artist = data.get("favorite_artist")
+        genres = data.get("genres", [])
+        time_of_day = data.get("time_of_day")
+        mood_tags = data.get("mood_tags", [])
+        event_name = data.get("event_name", "MoodCue Mix")
 
-        # Extract fields with fallback defaults
-        event_name = payload.get("event_name", "").strip()
-        genre = payload.get("genre", "").strip()
-        mood_tags = payload.get("mood_tags", "").strip()
-        favorite_artist = payload.get("favorite_artist", "").strip()
-        search_keywords = payload.get("search_keywords", "").strip()
-        time = payload.get("time", 30)
-        playlist_type = payload.get("playlist_type", "clean")
-
-        # ✅ DEBUG PRINT to verify everything
-        logging.info(f"🎯 Building playlist for event: '{event_name}'")
-        logging.info(f"🎼 Genre Input: {genre}")
-        logging.info(f"🎭 Mood Tag: {mood_tags}")
-        logging.info(f"🔍 Search Keywords: {search_keywords}")
-        logging.info(f"🎤 Favorite Artist(s): {favorite_artist}")
-        logging.info(f"⏱️ Target Duration: {time} minutes")
-        logging.info(f"🧼 Content Filter: {playlist_type}")
-        
-        playlist_info = build_smart_playlist_enhanced(
-            event_name=event_name,
-            genre=genre,
-            time=time,
+        # Build the playlist
+        result = build_smart_playlist_enhanced(
+            favorite_artist=favorite_artist,
+            genres=genres,
+            time_of_day=time_of_day,
             mood_tags=mood_tags,
-            search_keywords=search_keywords,
-            playlist_type=playlist_type,
-            favorite_artist=favorite_artist
+            event_name=event_name
         )
 
-        if not playlist_info:
-            logger.warning("⚠️ Playlist creation failed, no data returned.")
-            return jsonify({"error": "Playlist creation failed"}), 500
-        
-        logger.debug(f"[DEBUG] playlist_info type: {type(playlist_info)}, value: {playlist_info}")
-
-        # Determine if playlist_info is a string or dict
-        if isinstance(playlist_info, dict):
-            playlist_id = playlist_info.get("playlist_id", "")
-            spotify_url = playlist_info.get("spotify_url", "")
-            spotify_code_url = playlist_info.get("spotify_code_url", "")
-            track_count = playlist_info.get("track_count", 0)
-        else:
-            spotify_url = str(playlist_info)
-            playlist_id = spotify_url.split("/")[-1] if "spotify.com/playlist/" in spotify_url else ""
-            spotify_code_url = f"https://scannables.scdn.co/uri/plain/png/000000/white/640/spotify:playlist:{playlist_id}" if playlist_id else ""
-            track_count = 0  # Default fallback if we don’t know actual count
-
-        updates = {
-            "Playlist ID": playlist_id,
-            "Spotify URL": spotify_url,
-            "Spotify Code URL": spotify_code_url,
-            "Track Count": track_count
+        # Structure the response for Glide
+        payload = {
+            "row_id": row_id,
+            "playlist_id": result.get("playlist_id"),
+            "spotify_url": result.get("spotify_url"),
+            "spotify_code_url": result.get("spotify_code_url"),
+            "track_count": result.get("track_count"),
+            "has_spotify_code": bool(result.get("spotify_code_url")),
         }
 
-        logger.info(f"✅ Playlist created: {updates}")
-        return jsonify(updates), 200
+        print("📤 Sending to Glide Webhook:", payload)
+
+        # POST back to Glide's workflow webhook endpoint
+        glide_webhook_url = "https://go.glideapps.com/api/container/plugin/webhook-trigger/WE36jV1c5vSHZWc5A4oC/a170355b-005a-4c5a-ab2a-c65bdf04ad7a"
+        response = requests.post(glide_webhook_url, json=payload)
+        print("✅ Glide Webhook Status:", response.status_code)
+
+        return jsonify({"status": "success", "sent_to_glide": response.status_code == 200}), 200
 
     except Exception as e:
-        logger.exception("🔥 Exception during playlist creation")
+        print("❌ Error in glide_social:", str(e))
         return jsonify({"error": str(e)}), 500
 
 # --- Glide Playlist Creation Webhook End ---
 
     # --- Social & User Profile Endpoints ---
 
-@app.route("/like_playlist", methods=["POST"])
+@pp.route("/like_playlist", methods=["POST"])
 def like_playlist():
     data = request.json
     playlist_id = data.get("playlist_id")
     user_id = data.get("user_id")
     return jsonify({"status": "liked", "playlist_id": playlist_id, "user_id": user_id})
 
-@app.route("/view_playlist", methods=["POST"])
+@pp.route("/view_playlist", methods=["POST"])
 def view_playlist():
     data = request.json
     playlist_id = data.get("playlist_id")
     return jsonify({"status": "viewed", "playlist_id": playlist_id})
 
-@app.route("/get_user_profile", methods=["POST"])
+@pp.route("/get_user_profile", methods=["POST"])
 def get_user_profile():
     data = request.json
     user_email = data.get("email")
@@ -120,11 +97,11 @@ def get_user_profile():
         }
     })
 
-@app.route("/update_user_profile", methods=["POST"])
+@pp.route("/update_user_profile", methods=["POST"])
 def update_user_profile():
     data = request.json
     return jsonify({"status": "updated", "data": data})
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    pp.run(debug=True)
