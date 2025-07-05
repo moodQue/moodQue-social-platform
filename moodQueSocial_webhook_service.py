@@ -46,7 +46,6 @@ def handle_glide_webhook():
             search_keywords=search_keywords,
             playlist_type=playlist_type,
             favorite_artist=favorite_artist,
-            glide_user_id=glide_user_id
         )
 
         if not playlist_info:
