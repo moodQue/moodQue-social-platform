@@ -20,25 +20,33 @@ def index():
     return "MoodQue Webhook is Running"
 
 # --- Glide Playlist Creation Webhook ---
-@app.route("/glide-social", methods=["POST"])
+@webhook_bp.route('/glide-social', methods=['POST'])
 def handle_glide_webhook():
     try:
-        # Safely extract body
-        request_data = request.json
-        event = request_data.get("body", {})
+        event = request.get_json()
+        logger.info(f"📬 Received event: {event}")
 
-        logger.info(f"📥 Received event: {json.dumps(event)}")
+        # Extract nested body payload
+        payload = event.get("body", {})
+        logger.info(f"📫 Payload received: {payload}")
 
-        # Extract relevant values
-        favorite_artist = event.get("favorite_artist", "")
-        genres = event.get("genre", "")
-        mood_tags = event.get("mood_tags", "")
-        time = event.get("time", "")
-        search_keywords = event.get("search_keywords", "")
-        event_name = event.get("event_name", "")
-        playlist_type = event.get("playlist_type", "")
+        # Extract individual fields
+        event_name = payload.get("event_name", "")
+        genres = payload.get("genre", "")
+        mood_tags = payload.get("mood_tags", "")
+        time = payload.get("time", 30)
+        search_keywords = payload.get("search_keywords", "")
+        playlist_type = payload.get("playlist_type", "")
+        favorite_artist = payload.get("favorite_artist", "")
+        row_id = payload.get("row_id", "")
 
-        logger.info(f"🎯 Favorite artist: {favorite_artist}, Genres: {genres}, Moods: {mood_tags}, Time: {time}, Keywords: {search_keywords}")
+        logger.info(f"🎯 Building playlist for event: {event_name}")
+        logger.info(f"🎶 Genre Input: {genres}")
+        logger.info(f"🧠 Mood Tag: {mood_tags}")
+        logger.info(f"🔍 Search Keywords: {search_keywords}")
+        logger.info(f"💖 Favorite Artist(s): {favorite_artist}")
+        logger.info(f"⏱️ Target Duration: {time} minutes")
+        logger.info(f"🚦 Content Filter: {playlist_type}")
 
         playlist_info = build_smart_playlist_enhanced(
             event_name=event_name,
@@ -58,24 +66,17 @@ def handle_glide_webhook():
             "Playlist ID": playlist_info.get("playlist_id", ""),
             "Spotify URL": playlist_info.get("spotify_url", ""),
             "Spotify Code URL": playlist_info.get("spotify_code_url", ""),
-            "Has Spotify Code": "Yes" if playlist_info.get("spotify_code_url") else "No",
-            "Track Count": playlist_info.get("track_count", 0),
-            "Raw Webhook": json.dumps(playlist_info)
         }
 
-        logger.info(f"📡 Returning data to Glide: {json.dumps({'updates': updates})}")
-        return jsonify({"updates": updates})
+        logger.info(f"✅ Playlist created: {updates}")
+        return jsonify(updates), 200
 
     except Exception as e:
-        logger.error(f"❌ Exception during playlist creation: {e}")
+        logger.exception("🔥 Exception during playlist creation")
         return jsonify({"error": str(e)}), 500
+    # --- Glide Playlist Creation Webhook End ---
 
-
-
-
-
-    
-# --- Social & User Profile Endpoints ---
+    # --- Social & User Profile Endpoints ---
 
 @app.route("/like_playlist", methods=["POST"])
 def like_playlist():
