@@ -23,11 +23,13 @@ def index():
 @app.route("/glide-social", methods=["POST"])
 def handle_glide_webhook():
     try:
-        event = request.json.get("body", {})  # Extract the actual payload
+        # Safely extract body
+        request_data = request.json
+        event = request_data.get("body", {})
 
         logger.info(f"📥 Received event: {json.dumps(event)}")
 
-        # Extract relevant fields from the event
+        # Extract relevant values
         favorite_artist = event.get("favorite_artist", "")
         genres = event.get("genre", "")
         mood_tags = event.get("mood_tags", "")
@@ -38,7 +40,6 @@ def handle_glide_webhook():
 
         logger.info(f"🎯 Favorite artist: {favorite_artist}, Genres: {genres}, Moods: {mood_tags}, Time: {time}, Keywords: {search_keywords}")
 
-        # Build the playlist
         playlist_info = build_smart_playlist_enhanced(
             event_name=event_name,
             genre=genres,
@@ -53,17 +54,14 @@ def handle_glide_webhook():
             logger.warning("⚠️ Playlist creation failed, no data returned.")
             return jsonify({"error": "Playlist creation failed"}), 500
 
-        # Prepare data to return to Glide
         updates = {
             "Playlist ID": playlist_info.get("playlist_id", ""),
             "Spotify URL": playlist_info.get("spotify_url", ""),
             "Spotify Code URL": playlist_info.get("spotify_code_url", ""),
             "Has Spotify Code": "Yes" if playlist_info.get("spotify_code_url") else "No",
-            "Track Count": playlist_info.get("track_count", 0)
+            "Track Count": playlist_info.get("track_count", 0),
+            "Raw Webhook": json.dumps(playlist_info)
         }
-
-        # Optionally include a raw JSON string for Glide workflow flexibility
-        updates["Raw Webhook"] = json.dumps(updates)
 
         logger.info(f"📡 Returning data to Glide: {json.dumps({'updates': updates})}")
         return jsonify({"updates": updates})
@@ -71,6 +69,8 @@ def handle_glide_webhook():
     except Exception as e:
         logger.error(f"❌ Exception during playlist creation: {e}")
         return jsonify({"error": str(e)}), 500
+
+
 
 
 
