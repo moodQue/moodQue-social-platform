@@ -24,14 +24,14 @@ def index():
 @glide_social_bp.route('/glide_social', methods=['POST'])
 def glide_social():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         print("🔄 Incoming from Glide:", data)
 
         # Parse incoming data
         row_id = data.get("row_id")
-        favorite_artist = data.get("favorite_artist")
+        favorite_artist = data.get("favorite_artist", "")
         genres = data.get("genres", [])
-        time_of_day = data.get("time_of_day")
+        time_of_day = data.get("time_of_day", "")
         mood_tags = data.get("mood_tags", [])
         event_name = data.get("event_name", "MoodCue Mix")
 
@@ -44,14 +44,14 @@ def glide_social():
             event_name=event_name
         )
 
-        # Structure the response for Glide
+        # Prepare response payload to send back to Glide
         payload = {
             "row_id": row_id,
-            "playlist_id": result.get("playlist_id"),
-            "spotify_url": result.get("spotify_url"),
-            "spotify_code_url": result.get("spotify_code_url"),
-            "track_count": result.get("track_count"),
-            "has_spotify_code": bool(result.get("spotify_code_url")),
+            "playlist_id": result.get("playlist_id", ""),
+            "spotify_url": result.get("spotify_url", ""),
+            "spotify_code_url": result.get("spotify_code_url", ""),
+            "track_count": result.get("track_count", 0),
+            "has_spotify_code": bool(result.get("spotify_code_url"))
         }
 
         print("📤 Sending to Glide Webhook:", payload)
@@ -59,13 +59,16 @@ def glide_social():
         # POST back to Glide's workflow webhook endpoint
         glide_webhook_url = "https://go.glideapps.com/api/container/plugin/webhook-trigger/WE36jV1c5vSHZWc5A4oC/a170355b-005a-4c5a-ab2a-c65bdf04ad7a"
         response = requests.post(glide_webhook_url, json=payload)
-        print("✅ Glide Webhook Status:", response.status_code)
+
+        print(f"✅ Glide Webhook Status: {response.status_code}")
+        print(f"📦 Glide Webhook Response: {response.text}")
 
         return jsonify({"status": "success", "sent_to_glide": response.status_code == 200}), 200
 
     except Exception as e:
         print("❌ Error in glide_social:", str(e))
         return jsonify({"error": str(e)}), 500
+
 
 # --- Glide Playlist Creation Webhook End ---
 
