@@ -20,76 +20,56 @@ def index():
     return "MoodQue Webhook is Running"
 
 # --- Glide Playlist Creation Webhook ---
-@app.route("/glide-webhook", methods=["POST"])
+@app.route("/glide-social", methods=["POST"])
 def handle_glide_webhook():
-    """
-    This webhook is called BY Glide when a new playlist needs to be created.
-    It returns playlist metadata along with a Raw Webhook string for Glide to parse later.
-    """
-    data = request.json
-    row_id = data.get("🔒 row_id") or data.get("row_id")
-
-    
-    logger.info(f"🎵 Processing playlist request for row_id: {row_id}")
-    logger.info(f"Request data: {data}")
-
     try:
-        playlist_url = build_smart_playlist_enhanced(
-            event_name=data.get('event_name', '').strip(),
-            genre=data.get('genre', ''),
-            mood_tags=data.get('mood_tags', ''),
-            time=data.get('time', 30),
-            playlist_type=data.get('playlist_type', 'clean'),
-            search_keywords=data.get('search_keywords', ''),
-            favorite_artist=data.get('favorite_artist', '')
+        event = request.json
+        logger.info(f"📥 Received event: {json.dumps(event)}")
+
+        favorite_artist = event.get("Favorite Artist", "")
+        genres = event.get("Genres", "")
+        mood_tags = event.get("Mood Tags", "")
+        time = event.get("Time", "")
+        search_keywords = event.get("Search Keywords", "")
+        glide_user_id = event.get("Creator Email", "")
+        event_name = event.get("Event Name", "")
+
+        logger.info(f"🎯 Favorite artist: {favorite_artist}, Genres: {genres}, Moods: {mood_tags}, Time: {time}, Keywords: {search_keywords}")
+
+        playlist_info = build_smart_playlist_enhanced(
+            event=event_name,
+            genre=genres,
+            time=time,
+            mood_tags=mood_tags,
+            search_keywords=search_keywords,
+            favorite_artist=favorite_artist,
+            glide_user_id=glide_user_id
         )
 
-        if not playlist_url:
-            logger.error("❌ No playlist created - fallback failed")
-            return jsonify({
-                "updates": {
-                    "Playlist ID": "",
-                    "Spotify URL": "",
-                    "Spotify Code URL": "",
-                    "Has Spotify Code": "No",
-                    "Track Count": 0,
-                    "Raw Webhook": "{}"
-                }
-            }), 200
-
-        playlist_id = playlist_url.split("/")[-1] if playlist_url else ""
-        spotify_code_url = f"https://scannables.scdn.co/uri/plain/spotify:playlist:{playlist_id}" if playlist_id else ""
+        if not playlist_info:
+            logger.warning("⚠️ Playlist creation failed, no data returned.")
+            return jsonify({"error": "Playlist creation failed"}), 500
 
         updates = {
-            "Playlist ID": playlist_id,
-            "Spotify URL": playlist_url,
-            "Spotify Code URL": spotify_code_url,
-            "Has Spotify Code": "Yes" if spotify_code_url else "No",
-            "Track Count": int(data.get('time', 30))
+            "Playlist ID": playlist_info.get("playlist_id", ""),
+            "Spotify URL": playlist_info.get("spotify_url", ""),
+            "Spotify Code URL": playlist_info.get("spotify_code_url", ""),
+            "Has Spotify Code": "Yes" if playlist_info.get("spotify_code_url") else "No",
+            "Track Count": playlist_info.get("track_count", 0)
         }
+
+        # Add raw JSON string for use in Glide workflows
+        raw_webhook_json = json.dumps(updates)
+        updates["Raw Webhook"] = raw_webhook_json
 
         response_data = { "updates": updates }
 
-        logger.info(f"📡 Returning data to Glide: {response_data}")
-        logger.info(f"✅ Playlist created successfully: {playlist_url}")
-        if not isinstance(updates, dict):
-         logger.error(f"🚨 'updates' is type {type(updates)} instead of dict: {updates}")
-         logger.info(f"🔁 Full webhook response: {json.dumps(response_data)}")
-
-        return jsonify(response_data), 200
+        logger.info(f"📡 Returning data to Glide: {json.dumps(response_data)}")
+        return jsonify(response_data)
 
     except Exception as e:
-        logger.error(f"❌ Exception during playlist creation: {str(e)}")
-        return jsonify({
-            "updates": {
-                "Playlist ID": "",
-                "Spotify URL": "",
-                "Spotify Code URL": "",
-                "Has Spotify Code": "No",
-                "Track Count": 0,
-                "Raw Webhook": "{}"
-            }
-        }), 200
+        logger.error(f"❌ Exception during playlist creation: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
     
