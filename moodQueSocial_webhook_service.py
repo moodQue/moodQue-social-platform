@@ -36,12 +36,15 @@ def handle_glide_webhook():
 
         logger.info(f"🎯 Favorite artist: {favorite_artist}, Genres: {genres}, Moods: {mood_tags}, Time: {time}, Keywords: {search_keywords}")
 
+        playlist_type = event.get("playlist_type", "")
+
         playlist_info = build_smart_playlist_enhanced(
-            event=event_name,
+            event_name=event_name,
             genre=genres,
             time=time,
             mood_tags=mood_tags,
             search_keywords=search_keywords,
+            playlist_type=playlist_type,
             favorite_artist=favorite_artist,
             glide_user_id=glide_user_id
         )
