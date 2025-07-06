@@ -69,6 +69,9 @@ def glide_social():
             logger.warning("⚠️ Playlist creation failed.")
             return jsonify({"error": "Playlist creation failed"}), 500
 
+        logger.info(f"📡 Sending return webhook for row_id={row_id}")
+        logger.info(f"📦 Playlist Info Payload: {playlist_info}")
+
         # Send result to Glide return webhook
         status = send_to_glide_return_webhook(row_id, playlist_info)
 
