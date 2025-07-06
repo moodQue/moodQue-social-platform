@@ -51,7 +51,7 @@ def glide_social():
         search_keywords = payload.get("search_keywords", "").strip()
         time = payload.get("time", 30)
         playlist_type = payload.get("playlist_type", "clean")
-
+        logger.info(f"🎁 Playlist Info Keys: {list(playlist_info.keys())}")
         logger.info(f"🎯 Event: {event_name} | 🎼 Genre: {genre} | 🎭 Mood: {mood_tags} | ⏱️ Time: {time}")
 
         # Build Playlist
@@ -65,8 +65,8 @@ def glide_social():
             favorite_artist=favorite_artist
         )
 
-        if not playlist_info:
-            logger.warning("⚠️ Playlist creation failed.")
+        if not isinstance(playlist_info, dict) or "spotify_url" not in playlist_info:
+            logger.warning(f"⚠️ Playlist creation failed or invalid response: {playlist_info}")
             return jsonify({"error": "Playlist creation failed"}), 500
 
         logger.info(f"📡 Sending return webhook for row_id={row_id}")
