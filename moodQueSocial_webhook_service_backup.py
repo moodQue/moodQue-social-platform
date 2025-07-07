@@ -41,19 +41,11 @@ def send_to_glide_return_webhook(row_id, playlist_info):
 # --- Main Playlist Trigger Route ---
 @app.route("/glide_social", methods=["POST"])
 def glide_social():
-    # Parse JSON from request
-    payload = request.get_json(force=True)
-    logger.info(f"📥 Incoming Payload: {payload}")
-
-    # Extract required values
-    row_id = payload.get("row_id")
-    genre = payload.get("genre")
-    mood_tags = payload.get("mood_tags")
-    favorite_artist = payload.get("favorite_artist")
-    time_range = payload.get("time_range")
-
-    
     try:
+        # Parse JSON from request
+        payload = request.get_json(force=True)
+        logger.info(f"📥 Incoming Payload: {payload}")
+
         # Extract required values
         row_id = payload.get("row_id")
         genre = payload.get("genre")
@@ -61,14 +53,9 @@ def glide_social():
         favorite_artist = payload.get("favorite_artist")
         time_range = payload.get("time_range")
 
-        # event_name is not extracted above, so remove it from the check or extract it if needed
-        # If event_name is required, uncomment the next line:
-        # event_name = payload.get("event_name")
-        # and add event_name to the all() check below
-
         if not all([row_id, genre, mood_tags, favorite_artist]):
-            logger.warning(f"⚠️ Missing values: row_id={row_id}, genre={genre}, mood_tags={mood_tags}, favorite_artist={favorite_artist}")
-            return jsonify({"error": "Missing required fields"}), 400
+            logger.warning("⚠️ Missing one or more required parameters.")
+            return jsonify({"error": "Missing required data"}), 400
 
         # Call playlist builder
         playlist_info = build_smart_playlist_enhanced(
