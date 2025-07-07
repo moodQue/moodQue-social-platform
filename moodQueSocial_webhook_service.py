@@ -42,28 +42,24 @@ def send_to_glide_return_webhook(row_id, playlist_info):
 @app.route("/glide_social", methods=["POST"])
 def glide_social():
     # Parse JSON from request
-    payload = request.get_json(force=True)
-    logger.info(f"📥 Incoming Payload: {payload}")
+    payload = request.get_json()
+    body = payload.get("body", {})  # get the inner dict safely
 
-    # Extract required values
-    row_id = payload.get("row_id")
-    genre = payload.get("genre")
-    mood_tags = payload.get("mood_tags")
-    favorite_artist = payload.get("favorite_artist")
-    time_range = payload.get("time_range")
+    row_id = body.get("row_id")
+    event_name = body.get("event_name", "").strip()
+    genre = body.get("genre", "").strip()
+    mood_tags = body.get("mood_tags", "").strip()
+    favorite_artist = body.get("favorite_artist", "").strip()
+    search_keywords = body.get("search_keywords", "").strip()
+    time = body.get("time", 30)
+    playlist_type = body.get("playlist_type", "clean")
 
-    
     try:
         # Extract required values
-        row_id = payload.get("row_id")
-        genre = payload.get("genre")
-        mood_tags = payload.get("mood_tags")
-        favorite_artist = payload.get("favorite_artist")
-        time_range = payload.get("time_range")
-
+        # Use values from body, not payload
         # event_name is not extracted above, so remove it from the check or extract it if needed
         # If event_name is required, uncomment the next line:
-        # event_name = payload.get("event_name")
+        # event_name = body.get("event_name")
         # and add event_name to the all() check below
 
         if not all([row_id, genre, mood_tags, favorite_artist]):
@@ -74,9 +70,9 @@ def glide_social():
         playlist_info = build_smart_playlist_enhanced(
             favorite_artist=favorite_artist,
             genre=genre,
-            time=time_range,
+            time=time,
             mood_tags=mood_tags,
-            search_keywords=None  # Add if needed
+            search_keywords=search_keywords  # Add if needed
         )
 
         # Safely handle unexpected result types
