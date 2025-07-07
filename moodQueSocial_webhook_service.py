@@ -14,75 +14,76 @@ GLIDE_RETURN_WEBHOOK_URL = os.getenv("GLIDE_RETURN_WEBHOOK_URL")  # Set in Railw
 
 # --- Helper Function: Send Result to Glide Webhook ---
 def send_to_glide_return_webhook(row_id, playlist_info):
+    webhook_url = os.getenv("GLIDE_RETURN_WEBHOOK_URL")
+    if not webhook_url:
+        logger.error("🚫 No Glide Return Webhook URL configured.")
+        return
+
     payload = {
         "row_id": row_id,
-        "playlist_id": playlist_info.get("playlist_id", ""),
-        "spotify_url": playlist_info.get("spotify_url", ""),
-        "spotify_code_url": playlist_info.get("spotify_code_url", ""),
-        "has_code": playlist_info.get("has_code", False),
-        "track_count": playlist_info.get("track_count", 0),
+        "has_code": "true",
+        "playlist_id": playlist_info.get("playlist_id"),
+        "spotify_url": playlist_info.get("spotify_url"),
+        "track_count": str(playlist_info.get("track_count", "0")),
+        "spotify_code_url": playlist_info.get("spotify_code_url"),
     }
 
+    logger.info(f"📤 Sending to Glide Return Webhook: {webhook_url}")
+    logger.info(f"📦 Return Payload: {payload}")
+
     try:
-        response = requests.post(GLIDE_RETURN_WEBHOOK_URL, json=payload)
-        logger.info(f"📤 Sent to Glide Return Webhook → Status: {response.status_code}")
-        logger.debug(f"🔁 Glide Response: {response.text}")
-        return response.status_code
-    except Exception as e:
-        logger.exception("❌ Failed to post to Glide Return Webhook")
-        return None
+        response = requests.post(webhook_url, json=payload)
+        logger.info(f"📬 Glide Response: {response.status_code} - {response.text}")
+    except requests.RequestException as e:
+        logger.error(f"🧨 Error sending webhook to Glide: {e}")
+
 
 # --- Main Playlist Trigger Route ---
-@app.route('/glide-social', methods=['POST'])
+@app.route("/glide_social", methods=["POST"])
 def glide_social():
     try:
-        raw_payload = request.get_json(force=True)
-        logger.info(f"📥 Raw Payload: {raw_payload}")
+        # Parse JSON from request
+        payload = request.get_json(force=True)
+        logger.info(f"📥 Incoming Payload: {payload}")
 
-        payload = raw_payload.get("body", raw_payload)
-        logger.info(f"📦 Processed Payload: {payload}")
+        # Extract required values
+        row_id = payload.get("row_id")
+        genre = payload.get("genre")
+        mood_tags = payload.get("mood_tags")
+        favorite_artist = payload.get("favorite_artist")
+        time_range = payload.get("time_range")
 
-        # Extract fields
-        row_id = payload.get("🔒 row_id")  # Your custom Glide column
-        event_name = payload.get("event_name", "").strip()
-        genre = payload.get("genre", "").strip()
-        mood_tags = payload.get("mood_tags", "").strip()
-        favorite_artist = payload.get("favorite_artist", "").strip()
-        search_keywords = payload.get("search_keywords", "").strip()
-        time = payload.get("time", 30)
-        playlist_type = payload.get("playlist_type", "clean")
-        
-        # Build Playlist
+        if not all([row_id, genre, mood_tags, favorite_artist]):
+            logger.warning("⚠️ Missing one or more required parameters.")
+            return jsonify({"error": "Missing required data"}), 400
+
+        # Call playlist builder
         playlist_info = build_smart_playlist_enhanced(
-            event_name=event_name,
+            favorite_artist=favorite_artist,
             genre=genre,
-            time=time,
+            time=time_range,
             mood_tags=mood_tags,
-            search_keywords=search_keywords,
-            playlist_type=playlist_type,
-            favorite_artist=favorite_artist
+            search_keywords=None  # Add if needed
         )
-        
-        logger.info(f"🎁 Playlist Info Keys: {list(playlist_info.keys())}")
-        logger.info(f"🎯 Event: {event_name} | 🎼 Genre: {genre} | 🎭 Mood: {mood_tags} | ⏱️ Time: {time}")
-        
-        
-        if not isinstance(playlist_info, dict) or "spotify_url" not in playlist_info:
-            logger.warning(f"⚠️ Playlist creation failed or invalid response: {playlist_info}")
+
+        # Safely handle unexpected result types
+        if not isinstance(playlist_info, dict):
+            logger.warning(f"❌ Playlist creation failed. Raw Response: {playlist_info}")
             return jsonify({"error": "Playlist creation failed"}), 500
 
-        logger.info(f"📡 Sending return webhook for row_id={row_id}")
-        logger.info(f"📦 Playlist Info Payload: {playlist_info}")
+        logger.info(f"🎁 Playlist Info Keys: {list(playlist_info.keys())}")
+        logger.info(f"✅ Playlist Created: {playlist_info.get('spotify_url')}")
 
-        # Send result to Glide return webhook
-        status = send_to_glide_return_webhook(row_id, playlist_info)
+        # Send data back to Glide via webhook
+        try:
+            send_to_glide_return_webhook(row_id, playlist_info)
+        except Exception as e:
+            logger.error(f"🚨 Failed to send return webhook to Glide: {e}")
 
-        return jsonify({"message": "Playlist created", "status": status}), 200
+        # Send immediate 200 response back to Glide to complete workflow
+        return jsonify({"status": "Playlist built", "playlist_id": playlist_info.get("playlist_id")}), 200
 
     except Exception as e:
-        logger.exception("🔥 Exception in glide_social")
+        logger.exception("🔥 Unexpected server error in glide_social()")
         return jsonify({"error": str(e)}), 500
 
-# --- Flask App Entry Point ---
-if __name__ == '__main__':
-    app.run(debug=True)
