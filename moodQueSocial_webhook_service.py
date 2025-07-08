@@ -90,13 +90,11 @@ def glide_social():
     """Handle incoming playlist build requests from Glide with enhanced logging and error handling"""
     request_start_time = datetime.now()
     request_id = f"req_{int(request_start_time.timestamp())}"
-    
+
     try:
-        # Log request details
         logger.info(f"🎯 [{request_id}] New playlist request received")
         logger.info(f"🔍 [{request_id}] Request headers: {dict(request.headers)}")
-        
-        # Parse payload with enhanced error handling
+
         try:
             payload = request.get_json(force=True)
             logger.info(f"📨 [{request_id}] Raw payload received: {json.dumps(payload, indent=2)}")
@@ -104,23 +102,15 @@ def glide_social():
             logger.error(f"❌ [{request_id}] Failed to parse JSON payload: {parse_error}")
             return jsonify({"status": "error", "message": "Invalid JSON payload"}), 400
 
-        # Handle both payload formats (with or without "body" wrapper)
-        if "body" in payload:
-            # New format with "body" wrapper
-            body = payload.get("body", {})
-            logger.info(f"📝 [{request_id}] Using body wrapper format")
-        else:
-            # Old format without wrapper
-            body = payload
-            logger.info(f"📝 [{request_id}] Using direct format")
+        body = payload.get("body", {}) if "body" in payload else payload
+        logger.info(f"📝 [{request_id}] Using {'body wrapper' if 'body' in payload else 'direct'} format")
 
-        # Debug: Log all available keys to identify the row_id field
         logger.info(f"🔍 [{request_id}] Available keys in body: {list(body.keys())}")
         for key, value in body.items():
             if "row" in key.lower() or "id" in key.lower():
                 logger.info(f"🔍 [{request_id}] Potential row_id field: '{key}' = '{value}'")
 
-        # Extract required fields with detailed logging and better handling
+        # Extract fields
         row_id = body.get("row_id") or body.get("\ud83d\udd12 row_id") or body.get("🔒 row_id")
         event_name = body.get("event_name", "").strip()
         genre = body.get("genre", "").strip()
@@ -142,84 +132,79 @@ def glide_social():
         logger.info(f"   🚫 Content Filter: {playlist_type}")
         logger.info(f"   👤 User ID: {user_id}")
 
-        # Validate required fields
+        # Validate
         if not row_id:
-            logger.error(f"❌ [{request_id}] Missing row_id - this is required for return webhook")
+            logger.error(f"❌ [{request_id}] Missing row_id")
             return jsonify({"status": "error", "message": "Missing row_id"}), 400
 
         missing_fields = []
-        if not event_name:
-            missing_fields.append("event_name")
-        if not genre:
-            missing_fields.append("genre")
-        if not mood_tags:
-            missing_fields.append("mood_tags")
-        if not favorite_artist:
-            missing_fields.append("favorite_artist")
+        if not event_name: missing_fields.append("event_name")
+        if not genre: missing_fields.append("genre")
+        if not mood_tags: missing_fields.append("mood_tags")
+        if not favorite_artist: missing_fields.append("favorite_artist")
 
         if missing_fields:
-            logger.warning(f"⚠️ [{request_id}] Missing required fields: {missing_fields}")
-            
-            # Prepare failed response with detailed error
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            logger.warning(f"⚠️ [{request_id}] {error_message}")
             response_data = prepare_response_data(row_id, None, user_id, request_start_time)
             response_data["error_message"] = error_message
-            
             return jsonify(response_data), 400
 
-        # Build the playlist with enhanced logging
+        # Build playlist
         logger.info(f"🎵 [{request_id}] Starting playlist build...")
         playlist_build_start = datetime.now()
-        
+
         try:
             playlist_result = build_smart_playlist_enhanced(
-                event_name=event_name,           # playlist name
-                genre=genre,                     # genre
-                time=time,                       # duration in minutes
-                mood_tags=mood_tags,             # mood
-                search_keywords=search_keywords, # keywords
-                playlist_type=playlist_type,     # clean/explicit
-                favorite_artist=favorite_artist, # artist
-                request_id=request_id           # for logging
+                event_name=event_name,
+                genre=genre,
+                time=time,
+                mood_tags=mood_tags,
+                search_keywords=search_keywords,
+                playlist_type=playlist_type,
+                favorite_artist=favorite_artist,
+                request_id=request_id
             )
-            
-            playlist_build_duration = (datetime.now() - playlist_build_start).total_seconds()
-            logger.info(f"🎵 [{request_id}] Playlist build completed in {playlist_build_duration:.2f}s")
+
+            build_duration = (datetime.now() - playlist_build_start).total_seconds()
+            logger.info(f"🎵 [{request_id}] Playlist build completed in {build_duration:.2f}s")
             logger.info(f"🎵 [{request_id}] Playlist result: {playlist_result}")
-            
-            # Return successful response with playlist data
+
             if playlist_result:
                 response_data = prepare_response_data(row_id, playlist_result, user_id, request_start_time)
-                
-                # Log success metrics
+
+                # 🚀 Post to Glide
+                try:
+                    glide_url = os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
+                    if glide_url:
+                        post_result = requests.post(glide_url, json=response_data)
+                        logger.info(f"📤 [{request_id}] Posted to Glide (Status {post_result.status_code})")
+                    else:
+                        logger.warning(f"⚠️ [{request_id}] No GLIDE_RETURN_WEBHOOK_URL set")
+                except Exception as post_err:
+                    logger.error(f"❌ [{request_id}] Glide post failed: {post_err}")
+
                 total_duration = (datetime.now() - request_start_time).total_seconds()
                 logger.info(f"📊 [{request_id}] Total request duration: {total_duration:.2f}s")
-                logger.info(f"✅ [{request_id}] Returning successful response to Glide")
-                
                 return jsonify(response_data), 200
+
             else:
                 logger.warning(f"⚠️ [{request_id}] Playlist creation returned no data")
                 response_data = prepare_response_data(row_id, None, user_id, request_start_time)
                 response_data["error_message"] = "Playlist creation failed - no data returned"
-                
                 return jsonify(response_data), 500
 
         except Exception as playlist_error:
             logger.error(f"❌ [{request_id}] Playlist build failed: {playlist_error}", exc_info=True)
-            
-            # Return failure response with error details
             response_data = prepare_response_data(row_id, None, user_id, request_start_time)
             response_data["error_message"] = f"Playlist build failed: {str(playlist_error)}"
-            
             return jsonify(response_data), 500
 
-    except Exception as e:
-        logger.error(f"❌ [{request_id}] Critical exception in glide_social: {e}", exc_info=True)
-        
-        # Return error response even for critical failures
+    except Exception as critical:
+        logger.error(f"❌ [{request_id}] Critical exception: {critical}", exc_info=True)
         try:
-            error_response = {
-                "row_id": request.get_json().get("body", {}).get("row_id", "unknown") if request.get_json() else "unknown",
+            fallback = {
+                "row_id": request.get_json().get("body", {}).get("row_id", "unknown"),
                 "status": "failed",
                 "error_message": "Internal server error",
                 "has_code": "false",
@@ -227,14 +212,14 @@ def glide_social():
                 "spotify_url": "",
                 "created_at": datetime.now().isoformat()
             }
-            return jsonify(error_response), 500
+            return jsonify(fallback), 500
         except:
-            # Absolute fallback
             return jsonify({
                 "status": "failed",
                 "error_message": "Critical server error",
                 "has_code": "false"
             }), 500
+
 
 
 # --- Social Metrics Tracking Routes ---
