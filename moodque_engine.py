@@ -832,22 +832,42 @@ def emergency_track_search(headers, limit, playlist_type="clean"):
         print(f"❌ Emergency search completely failed: {e}")
         return []
 
-# Replace the build_smart_playlist_enhanced function in moodque_engine.py with this fixed version:
+# build_smart_playlist_enhanced function
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
                                    playlist_type, favorite_artist, request_id=None):
-    print(f"[{request_id}] 🎧 Building playlist for event: '{event_name}'")
-    print(f"[{request_id}] 🔥 Genre Input: {genre}")
-    print(f"[{request_id}] 🎭 Mood Tag: {mood_tags}")
-    print(f"[{request_id}] 🧠 Search Keywords: {search_keywords}")
-    print(f"[{request_id}] 🌟 Favorite Artist(s): {favorite_artist}")
-    print(f"[{request_id}] ⏰ Target Duration: {time} minutes")
-    print(f"[{request_id}] 🚫 Content Filter: {playlist_type}")
+    """
+    Build a smart playlist with enhanced features
+    
+    Args:
+        event_name (str): Name of the playlist/event
+        genre (str): Music genre
+        time (int): Target duration in minutes
+        mood_tags (str): Mood tags for the playlist
+        search_keywords (str): Additional search keywords
+        playlist_type (str): "clean" or "explicit"
+        favorite_artist (str): Favorite artist(s)
+        request_id (str): Request ID for logging
+    
+    Returns:
+        str: Spotify playlist URL if successful, None if failed
+    """
+    logger_prefix = f"[{request_id}]" if request_id else ""
+    
+    print(f"{logger_prefix} 🎧 Building playlist for event: '{event_name}'")
+    print(f"{logger_prefix} 🔥 Genre Input: {genre}")
+    print(f"{logger_prefix} 🎭 Mood Tag: {mood_tags}")
+    print(f"{logger_prefix} 🧠 Search Keywords: {search_keywords}")
+    print(f"{logger_prefix} 🌟 Favorite Artist(s): {favorite_artist}")
+    print(f"{logger_prefix} ⏰ Target Duration: {time} minutes")
+    print(f"{logger_prefix} 🚫 Content Filter: {playlist_type}")
 
+    # Clean up favorite_artist input
     if favorite_artist:
         favorite_artist = favorite_artist.replace("'", "'").strip()
 
     try:
+        # Get fresh access token
         access_token = refresh_access_token()
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -856,8 +876,9 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         estimated_track_count = max(10, int(target_duration_minutes / 3.5))  # Rough estimate
         max_tracks = min(estimated_track_count * 2, 100)  # Get more options, limit to 100
         
-        print(f"[{request_id}] 🎯 Target: {target_duration_minutes} minutes (~{estimated_track_count} tracks)")
+        print(f"{logger_prefix} 🎯 Target: {target_duration_minutes} minutes (~{estimated_track_count} tracks)")
 
+        # Get tracks using enhanced search
         track_items = search_spotify_tracks_enhanced_with_duration(
             genre=genre,
             headers=headers,
@@ -870,31 +891,41 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         )
 
         if not track_items:
-            print(f"[{request_id}] ❌ No valid tracks found, cannot create playlist")
+            print(f"{logger_prefix} ❌ No valid tracks found, cannot create playlist")
             return None
 
+        # Get user ID
         user_id = get_spotify_user_id(headers)
         if not user_id:
-            print(f"[{request_id}] ❌ Could not get user ID")
+            print(f"{logger_prefix} ❌ Could not get user ID")
             return None
 
-        playlist_id = create_new_playlist(headers, user_id, event_name)
+        # Create playlist
+        playlist_id = create_new_playlist(headers, user_id, event_name, f"MoodQue playlist for {event_name}")
         if not playlist_id:
-            print(f"[{request_id}] ❌ Could not create playlist")
+            print(f"{logger_prefix} ❌ Could not create playlist")
             return None
 
-        # Add tracks and get final duration
+        # Add tracks to playlist
         success = add_tracks_to_playlist(headers, playlist_id, track_items)
-        if success:
-            final_duration = calculate_playlist_duration(track_items, headers)
-            print(f"[{request_id}] ✅ Final playlist: {len(track_items)} tracks, {final_duration:.1f} minutes")
+        if not success:
+            print(f"{logger_prefix} ❌ Could not add tracks to playlist")
+            return None
 
+        # Calculate final duration
+        final_duration = calculate_playlist_duration(track_items, headers)
+        print(f"{logger_prefix} ✅ Final playlist: {len(track_items)} tracks, {final_duration:.1f} minutes")
+
+        # Return the Spotify URL
         playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-        print(f"[{request_id}] ✅ Playlist created: {playlist_url}")
+        print(f"{logger_prefix} ✅ Playlist created successfully: {playlist_url}")
+        
         return playlist_url
         
     except Exception as e:
-        print(f"[{request_id}] ❌ Error building playlist: {e}")
+        print(f"{logger_prefix} ❌ Error building playlist: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def search_spotify_tracks_enhanced_with_duration(genre, headers, target_duration_minutes=30, max_tracks=50, 
