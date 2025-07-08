@@ -114,8 +114,14 @@ def glide_social():
             body = payload
             logger.info(f"📝 [{request_id}] Using direct format")
 
-        # Extract required fields with detailed logging
-        row_id = body.get("row_id")
+        # Debug: Log all available keys to identify the row_id field
+        logger.info(f"🔍 [{request_id}] Available keys in body: {list(body.keys())}")
+        for key, value in body.items():
+            if "row" in key.lower() or "id" in key.lower():
+                logger.info(f"🔍 [{request_id}] Potential row_id field: '{key}' = '{value}'")
+
+        # Extract required fields with detailed logging and better handling
+        row_id = body.get("row_id") or body.get("\ud83d\udd12 row_id") or body.get("🔒 row_id")
         event_name = body.get("event_name", "").strip()
         genre = body.get("genre", "").strip()
         mood_tags = body.get("mood_tags", "").strip()
