@@ -41,30 +41,14 @@ def send_to_glide_return_webhook(row_id, playlist_info):
 # --- Main Playlist Trigger Route ---
 @app.route("/glide_social", methods=["POST"])
 def glide_social():
-    # Parse JSON from request
-    payload = request.get_json()
-    body = payload.get("body", {})  # get the inner dict safely
-
-    row_id = body.get("row_id")
-    event_name = body.get("event_name", "").strip()
-    genre = body.get("genre", "").strip()
-    mood_tags = body.get("mood_tags", "").strip()
-    favorite_artist = body.get("favorite_artist", "").strip()
-    search_keywords = body.get("search_keywords", "").strip()
-    time = body.get("time", 30)
-    playlist_type = body.get("playlist_type", "clean")
-
     try:
-        # Extract required values
-        # Use values from body, not payload
-        # event_name is not extracted above, so remove it from the check or extract it if needed
-        # If event_name is required, uncomment the next line:
-        # event_name = body.get("event_name")
-        # and add event_name to the all() check below
-
-        if not all([row_id, genre, mood_tags, favorite_artist]):
-            logger.warning(f"⚠️ Missing values: row_id={row_id}, genre={genre}, mood_tags={mood_tags}, favorite_artist={favorite_artist}")
-            return jsonify({"error": "Missing required fields"}), 400
+        data = request.get_json(force=True)
+        row_id = data.get("row_id")
+        favorite_artist = data.get("favorite_artist")
+        genre = data.get("genre")
+        time = data.get("time")
+        mood_tags = data.get("mood_tags")
+        search_keywords = data.get("search_keywords")
 
         # Call playlist builder
         playlist_info = build_smart_playlist_enhanced(
@@ -96,3 +80,4 @@ def glide_social():
         logger.exception("🔥 Unexpected server error in glide_social()")
         return jsonify({"error": str(e)}), 500
 
+# Removed invalid standalone return statement
