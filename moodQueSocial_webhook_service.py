@@ -3,82 +3,118 @@ from flask import Flask, request, jsonify
 from moodque_engine import build_smart_playlist_enhanced  # Adjust path if needed
 import requests
 import os
+from datetime import datetime
+import json
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 logger = logging.getLogger("moodQueSocial_webhook")
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # --- Constants ---
-GLIDE_RETURN_WEBHOOK_URL = os.getenv("GLIDE_RETURN_WEBHOOK_URL")  # Set in Railway or .env
+# Removed GLIDE_RETURN_WEBHOOK_URL since we're using direct response
 
-# --- Helper Function: Send Result to Glide Webhook ---
-def send_to_glide_return_webhook(row_id, playlist_info):
-    """Send playlist results back to Glide return webhook"""
-    webhook_url = os.getenv("GLIDE_RETURN_WEBHOOK_URL")
-    if not webhook_url:
-        logger.error("🚫 No Glide Return Webhook URL configured.")
-        return
+# --- Helper Function: Prepare Response Data ---
+def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_start=None):
+    """Prepare response data for direct return to Glide"""
+    
+    # Calculate processing time
+    processing_duration = None
+    if processing_time_start:
+        processing_duration = round((datetime.now() - processing_time_start).total_seconds(), 2)
 
-    # Prepare payload for Glide return webhook
+    # Prepare enhanced response data
     if playlist_info and isinstance(playlist_info, str):
-        # If playlist_info is just a URL string
-        payload = {
+        # If playlist_info is just a URL string (successful creation)
+        playlist_id = playlist_info.split('/')[-1] if '/' in playlist_info else ""
+        response_data = {
             "row_id": row_id,
+            "user_id": user_id or "unknown",
             "has_code": "true",
-            "playlist_id": playlist_info.split('/')[-1] if '/' in playlist_info else "",
+            "playlist_id": playlist_id,
             "spotify_url": playlist_info,
-            "track_count": "0",  # You might want to get actual track count
-            "spotify_code_url": playlist_info,
-            "status": "completed"
+            "track_count": "0",  # Will be updated with actual count later
+            "spotify_code_url": f"https://scannables.scdn.co/uri/plain/jpeg/black/white/640/spotify:playlist:{playlist_id}",
+            "status": "completed",
+            "error_message": "",
+            "processing_time_seconds": processing_duration,
+            "created_at": datetime.now().isoformat(),
+            "play_count": 0,  # Initialize social metrics
+            "like_count": 0,
+            "share_count": 0
         }
     elif playlist_info and isinstance(playlist_info, dict):
         # If playlist_info is a dictionary with details
-        payload = {
+        response_data = {
             "row_id": row_id,
+            "user_id": user_id or "unknown",
             "has_code": "true",
             "playlist_id": playlist_info.get("playlist_id", ""),
             "spotify_url": playlist_info.get("spotify_url", ""),
             "track_count": str(playlist_info.get("track_count", "0")),
             "spotify_code_url": playlist_info.get("spotify_code_url", ""),
-            "status": "completed"
+            "status": "completed",
+            "error_message": "",
+            "processing_time_seconds": processing_duration,
+            "created_at": datetime.now().isoformat(),
+            "play_count": 0,
+            "like_count": 0,
+            "share_count": 0
         }
     else:
         # If playlist creation failed
-        payload = {
+        response_data = {
             "row_id": row_id,
+            "user_id": user_id or "unknown",
             "has_code": "false",
             "playlist_id": "",
             "spotify_url": "",
             "track_count": "0",
             "spotify_code_url": "",
-            "status": "failed"
+            "status": "failed",
+            "error_message": "Playlist creation failed - no data returned",
+            "processing_time_seconds": processing_duration,
+            "created_at": datetime.now().isoformat(),
+            "play_count": 0,
+            "like_count": 0,
+            "share_count": 0
         }
 
-    logger.info(f"📤 Sending to Glide Return Webhook: {webhook_url}")
-    logger.info(f"📦 Return Payload: {payload}")
-
-    try:
-        response = requests.post(webhook_url, json=payload, timeout=30)
-        logger.info(f"📬 Glide Response: {response.status_code} - {response.text}")
-        return response.status_code == 200
-    except requests.RequestException as e:
-        logger.error(f"🧨 Error sending webhook to Glide: {e}")
-        return False
+    logger.info(f"📦 Prepared response data: {json.dumps(response_data, indent=2)}")
+    return response_data
 
 
 # --- Main Playlist Trigger Route ---
 @app.route("/glide_social", methods=["POST"])
 def glide_social():
-    """Handle incoming playlist build requests from Glide"""
+    """Handle incoming playlist build requests from Glide with enhanced logging and error handling"""
+    request_start_time = datetime.now()
+    request_id = f"req_{int(request_start_time.timestamp())}"
+    
     try:
-        payload = request.get_json()
-        logger.info(f"📨 Raw Payload Received: {payload}")
+        # Log request details
+        logger.info(f"🎯 [{request_id}] New playlist request received")
+        logger.info(f"🔍 [{request_id}] Request headers: {dict(request.headers)}")
+        
+        # Parse payload with enhanced error handling
+        try:
+            payload = request.get_json(force=True)
+            logger.info(f"📨 [{request_id}] Raw payload received: {json.dumps(payload, indent=2)}")
+        except Exception as parse_error:
+            logger.error(f"❌ [{request_id}] Failed to parse JSON payload: {parse_error}")
+            return jsonify({"status": "error", "message": "Invalid JSON payload"}), 400
 
-        # ✅ Glide sends data under a "body" key
-        body = payload.get("body", {})
+        # Handle both payload formats (with or without "body" wrapper)
+        if "body" in payload:
+            # New format with "body" wrapper
+            body = payload.get("body", {})
+            logger.info(f"📝 [{request_id}] Using body wrapper format")
+        else:
+            # Old format without wrapper
+            body = payload
+            logger.info(f"📝 [{request_id}] Using direct format")
 
-        # Extract required fields
+        # Extract required fields with detailed logging
         row_id = body.get("row_id")
         event_name = body.get("event_name", "").strip()
         genre = body.get("genre", "").strip()
@@ -87,36 +123,47 @@ def glide_social():
         search_keywords = body.get("search_keywords", "").strip()
         time = body.get("time", 30)
         playlist_type = body.get("playlist_type", "clean")
+        user_id = body.get("user_id", body.get("creator_email", "unknown"))
 
-        logger.info(f"🎯 Processed Fields:")
-        logger.info(f"   - Row ID: {row_id}")
-        logger.info(f"   - Event Name: {event_name}")
-        logger.info(f"   - Genre: {genre}")
-        logger.info(f"   - Mood Tags: {mood_tags}")
-        logger.info(f"   - Favorite Artist: {favorite_artist}")
-        logger.info(f"   - Search Keywords: {search_keywords}")
-        logger.info(f"   - Time: {time}")
-        logger.info(f"   - Playlist Type: {playlist_type}")
+        logger.info(f"🎯 [{request_id}] Extracted fields:")
+        logger.info(f"   📍 Row ID: {row_id}")
+        logger.info(f"   🎪 Event Name: {event_name}")
+        logger.info(f"   🎵 Genre: {genre}")
+        logger.info(f"   😊 Mood Tags: {mood_tags}")
+        logger.info(f"   🌟 Favorite Artist: {favorite_artist}")
+        logger.info(f"   🔍 Search Keywords: {search_keywords}")
+        logger.info(f"   ⏰ Duration: {time} minutes")
+        logger.info(f"   🚫 Content Filter: {playlist_type}")
+        logger.info(f"   👤 User ID: {user_id}")
 
-        # ✅ Check for required fields
+        # Validate required fields
         if not row_id:
-            logger.error("❌ Missing row_id - this is required for return webhook")
+            logger.error(f"❌ [{request_id}] Missing row_id - this is required for return webhook")
             return jsonify({"status": "error", "message": "Missing row_id"}), 400
 
-        if not all([event_name, genre, mood_tags, favorite_artist, playlist_type]):
-            logger.warning(f"⚠️ Missing required fields:")
-            logger.warning(f"   - Event Name: {'✓' if event_name else '✗'}")
-            logger.warning(f"   - Genre: {'✓' if genre else '✗'}")
-            logger.warning(f"   - Mood Tags: {'✓' if mood_tags else '✗'}")
-            logger.warning(f"   - Favorite Artist: {'✓' if favorite_artist else '✗'}")
-            logger.warning(f"   - Playlist Type: {'✓' if playlist_type else '✗'}")
-            
-            # Send failed status back to Glide
-            send_to_glide_return_webhook(row_id, None)
-            return jsonify({"status": "missing values"}), 400
+        missing_fields = []
+        if not event_name:
+            missing_fields.append("event_name")
+        if not genre:
+            missing_fields.append("genre")
+        if not mood_tags:
+            missing_fields.append("mood_tags")
+        if not favorite_artist:
+            missing_fields.append("favorite_artist")
 
-        # ✅ Build the playlist with correct parameter order
-        logger.info("🎵 Starting playlist build...")
+        if missing_fields:
+            logger.warning(f"⚠️ [{request_id}] Missing required fields: {missing_fields}")
+            
+            # Prepare failed response with detailed error
+            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            response_data = prepare_response_data(row_id, None, user_id, request_start_time)
+            response_data["error_message"] = error_message
+            
+            return jsonify(response_data), 400
+
+        # Build the playlist with enhanced logging
+        logger.info(f"🎵 [{request_id}] Starting playlist build...")
+        playlist_build_start = datetime.now()
         
         try:
             playlist_result = build_smart_playlist_enhanced(
@@ -127,39 +174,119 @@ def glide_social():
                 search_keywords=search_keywords, # keywords
                 playlist_type=playlist_type,     # clean/explicit
                 favorite_artist=favorite_artist, # artist
-                request_id=row_id               # for logging
+                request_id=request_id           # for logging
             )
             
-            logger.info(f"🎵 Playlist build result: {playlist_result}")
+            playlist_build_duration = (datetime.now() - playlist_build_start).total_seconds()
+            logger.info(f"🎵 [{request_id}] Playlist build completed in {playlist_build_duration:.2f}s")
+            logger.info(f"🎵 [{request_id}] Playlist result: {playlist_result}")
             
-            # ✅ Send the return webhook
+            # Return successful response with playlist data
             if playlist_result:
-                success = send_to_glide_return_webhook(row_id, playlist_result)
-                if success:
-                    logger.info("✅ Successfully sent return webhook to Glide")
-                else:
-                    logger.error("❌ Failed to send return webhook to Glide")
+                response_data = prepare_response_data(row_id, playlist_result, user_id, request_start_time)
+                
+                # Log success metrics
+                total_duration = (datetime.now() - request_start_time).total_seconds()
+                logger.info(f"📊 [{request_id}] Total request duration: {total_duration:.2f}s")
+                logger.info(f"✅ [{request_id}] Returning successful response to Glide")
+                
+                return jsonify(response_data), 200
             else:
-                logger.warning("⚠️ Playlist creation returned no data.")
-                send_to_glide_return_webhook(row_id, None)
-
-            return jsonify({"status": "success", "playlist_url": playlist_result}), 200
+                logger.warning(f"⚠️ [{request_id}] Playlist creation returned no data")
+                response_data = prepare_response_data(row_id, None, user_id, request_start_time)
+                response_data["error_message"] = "Playlist creation failed - no data returned"
+                
+                return jsonify(response_data), 500
 
         except Exception as playlist_error:
-            logger.error(f"❌ Playlist build failed: {playlist_error}", exc_info=True)
-            send_to_glide_return_webhook(row_id, None)
-            return jsonify({"status": "error", "message": f"Playlist build failed: {str(playlist_error)}"}), 500
+            logger.error(f"❌ [{request_id}] Playlist build failed: {playlist_error}", exc_info=True)
+            
+            # Return failure response with error details
+            response_data = prepare_response_data(row_id, None, user_id, request_start_time)
+            response_data["error_message"] = f"Playlist build failed: {str(playlist_error)}"
+            
+            return jsonify(response_data), 500
 
     except Exception as e:
-        logger.error(f"❌ Exception in glide_social: {e}", exc_info=True)
+        logger.error(f"❌ [{request_id}] Critical exception in glide_social: {e}", exc_info=True)
+        
+        # Return error response even for critical failures
+        try:
+            error_response = {
+                "row_id": request.get_json().get("body", {}).get("row_id", "unknown") if request.get_json() else "unknown",
+                "status": "failed",
+                "error_message": "Internal server error",
+                "has_code": "false",
+                "playlist_id": "",
+                "spotify_url": "",
+                "created_at": datetime.now().isoformat()
+            }
+            return jsonify(error_response), 500
+        except:
+            # Absolute fallback
+            return jsonify({
+                "status": "failed",
+                "error_message": "Critical server error",
+                "has_code": "false"
+            }), 500
+
+
+# --- Social Metrics Tracking Routes ---
+@app.route("/track_play", methods=["POST"])
+def track_play():
+    """Track playlist play events for social metrics"""
+    try:
+        data = request.get_json()
+        playlist_id = data.get("playlist_id")
+        user_id = data.get("user_id")
+        
+        logger.info(f"🎧 Play tracked - Playlist: {playlist_id}, User: {user_id}")
+        
+        # Here you can add logic to update play counts in your database
+        # For now, we'll just log it
+        
+        return jsonify({"status": "play_tracked"}), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error tracking play: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/track_like", methods=["POST"])
+def track_like():
+    """Track playlist like events for social metrics"""
+    try:
+        data = request.get_json()
+        playlist_id = data.get("playlist_id")
+        user_id = data.get("user_id")
+        action = data.get("action", "like")  # like or unlike
+        
+        logger.info(f"❤️ Like tracked - Playlist: {playlist_id}, User: {user_id}, Action: {action}")
+        
+        # Here you can add logic to update like counts in your database
+        
+        return jsonify({"status": "like_tracked", "action": action}), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Error tracking like: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # --- Health Check Route ---
 @app.route("/health", methods=["GET"])
 def health_check():
-    """Health check endpoint"""
-    return jsonify({"status": "healthy", "service": "moodQueSocial_webhook"}), 200
+    """Health check endpoint with enhanced diagnostics"""
+    try:
+        return jsonify({
+            "status": "healthy", 
+            "service": "moodQueSocial_webhook",
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.0",
+            "features": ["playlist_creation", "social_metrics", "enhanced_logging"]
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Health check failed: {e}")
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
 # --- Test Route ---
@@ -168,12 +295,22 @@ def test_endpoint():
     """Test endpoint to verify webhook is working"""
     if request.method == "POST":
         data = request.get_json()
-        logger.info(f"🧪 Test POST data: {data}")
-        return jsonify({"status": "test_success", "received": data}), 200
+        logger.info(f"🧪 Test POST data: {json.dumps(data, indent=2)}")
+        return jsonify({
+            "status": "test_success", 
+            "received": data,
+            "timestamp": datetime.now().isoformat()
+        }), 200
     else:
-        return jsonify({"status": "test_success", "method": "GET"}), 200
+        return jsonify({
+            "status": "test_success", 
+            "method": "GET",
+            "timestamp": datetime.now().isoformat(),
+            "message": "Webhook service is running"
+        }), 200
 
 
 if __name__ == "__main__":
     # For local testing
+    logger.info("🚀 Starting moodQueSocial webhook service...")
     app.run(debug=True, host="0.0.0.0", port=5000)
