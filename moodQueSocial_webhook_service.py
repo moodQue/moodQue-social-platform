@@ -165,6 +165,7 @@ def glide_social():
                 favorite_artist=favorite_artist,
                 request_id=request_id
             )
+            track_count = playlist_result.get("track_count", 0)
 
             build_duration = (datetime.now() - playlist_build_start).total_seconds()
             logger.info(f"🎵 [{request_id}] Playlist build completed in {build_duration:.2f}s")
@@ -172,6 +173,7 @@ def glide_social():
 
             if playlist_result:
                 response_data = prepare_response_data(row_id, playlist_result, user_id, request_start_time)
+                response_data["track_count"] = track_count
 
                 # 🚀 Post to Glide
                 try:
