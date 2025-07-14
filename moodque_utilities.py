@@ -2,6 +2,8 @@ import os
 import base64
 import requests
 from dotenv import load_dotenv
+from firebase_admin_init import db
+
 
 
 load_dotenv()
@@ -296,3 +298,12 @@ def filter_explicit_content(tracks, headers, playlist_type):
     except Exception as e:
         print(f"❌ Error filtering explicit content: {e}")
         return tracks
+    
+    from firebase_admin_init import db
+
+def save_user_tokens(user_id, access_token, refresh_token):
+    doc_ref = db.collection("users").document(user_id)
+    doc_ref.set({
+        "access_token": access_token,
+        "refresh_token": refresh_token
+    }, merge=True)
