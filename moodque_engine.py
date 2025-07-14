@@ -585,7 +585,7 @@ def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artis
     print("⚠️ Falling back to Last.fm recommendations...")
     genre = seed_genres[0] if seed_genres else "pop"
     birth_year = mood_params.get("birth_year") if mood_params else None
-    fallback_tracks = get_lastfm_recommendations(seed_artists, genre, birth_year)
+    fallback_tracks = get_recommendations(seed_artists, genre, birth_year)
     fallback_uris = []
 
     for t in fallback_tracks:
