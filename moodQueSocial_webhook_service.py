@@ -150,7 +150,7 @@ def glide_social():
             response_data["error_message"] = error_message
             return jsonify(response_data), 400
 
-        # Build playlist
+                # Build playlist
         logger.info(f"🎵 [{request_id}] Starting playlist build...")
         playlist_build_start = datetime.now()
 
@@ -165,7 +165,12 @@ def glide_social():
                 favorite_artist=favorite_artist,
                 request_id=request_id
             )
-            track_count = playlist_result.get("track_count", 0)
+
+            if isinstance(playlist_result, dict):
+                track_count = playlist_result.get("track_count", 0)
+            else:
+                track_count = 0
+                logger.warning(f"⚠️ [{request_id}] Playlist result is a string (likely URL); track_count set to 0")
 
             build_duration = (datetime.now() - playlist_build_start).total_seconds()
             logger.info(f"🎵 [{request_id}] Playlist build completed in {build_duration:.2f}s")
@@ -201,7 +206,7 @@ def glide_social():
             response_data = prepare_response_data(row_id, None, user_id, request_start_time)
             response_data["error_message"] = f"Playlist build failed: {str(playlist_error)}"
             return jsonify(response_data), 500
-
+    
     except Exception as critical:
         logger.error(f"❌ [{request_id}] Critical exception: {critical}", exc_info=True)
         try:
