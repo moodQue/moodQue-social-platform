@@ -5,11 +5,15 @@ import requests
 import os
 from datetime import datetime
 import json
+from moodque_auth import auth_bp
+
+
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 logger = logging.getLogger("moodQueSocial_webhook")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+app.register_blueprint(auth_bp)
 
 # --- Constants ---
 # Removed GLIDE_RETURN_WEBHOOK_URL since we're using direct response
