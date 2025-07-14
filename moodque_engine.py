@@ -1,9 +1,13 @@
 from dotenv import load_dotenv
+from lastfm_recommender import get_recommendations
 import os
 import requests
 import base64
 import random
 import uuid
+import json
+from moodque_utilities import search_spotify_track
+
 
 load_dotenv(dotenv_path=".env")
 
@@ -36,6 +40,63 @@ SPOTIFY_VALID_GENRES = [
     "swedish", "synth-pop", "tango", "techno", "trance", "trip-hop", 
     "turkish", "work-out", "world-music"
 ]
+
+def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
+    """Get recommendations using moodQue recommender and build track list"""
+    # Handle genre
+    if not seed_genres:
+        print("⚠️ No genre provided. Defaulting to 'pop'.")
+    genre = seed_genres[0] if seed_genres else "pop"
+
+    # Handle birth year
+    birth_year = None
+    if mood_params:
+        birth_year = mood_params.get("birth_year")
+    if not birth_year:
+        print("⚠️ No birth year provided. Era scoring may be less accurate.")
+
+    # Get recommendations
+    tracklist = get_recommendations(seed_artists, genre, birth_year)
+
+    # Optional: Log selected tracks
+    for t in tracklist:
+        print(f"🎧 Selected: {t['artist']} - {t['track']} (score: {t['score']})")
+
+    return tracklist  # You’ll pass this to the playlist builder
+
+def build_spotify_playlist_from_tracks(headers, user_id, playlist_name, tracklist):
+    # Create a playlist
+    create_url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
+    payload = json.dumps({"name": playlist_name, "description": "Made with moodQue", "public": False})
+    try:
+        res = requests.post(create_url, headers=headers, data=payload)
+        if res.status_code == 201:
+            playlist_id = res.json().get("id")
+            print(f"✅ Created playlist: {playlist_name}")
+            
+            # Get track URIs from search
+            uris = []
+            for track in tracklist:
+                uri = search_spotify_track(track["artist"], track["track"], headers)
+                if uri:
+                    uris.append(uri)
+
+            # Add tracks to playlist
+            if uris:
+                add_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+                add_res = requests.post(add_url, headers=headers, json={"uris": uris})
+                if add_res.status_code == 201:
+                    print(f"🎶 Added {len(uris)} tracks to playlist!")
+                    return playlist_id
+                else:
+                    print(f"⚠️ Failed to add tracks: {add_res.status_code} {add_res.text}")
+            else:
+                print("⚠️ No tracks found to add.")
+        else:
+            print(f"❌ Playlist creation failed: {res.status_code} {res.text}")
+    except Exception as e:
+        print(f"❌ Exception during playlist build: {e}")
+    return None
 
 # Map your app genres to Spotify genres
 GENRE_MAPPING = {

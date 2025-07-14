@@ -3,6 +3,7 @@ import base64
 import requests
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
