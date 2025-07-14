@@ -361,60 +361,6 @@ def get_artist_ids(artist_names, headers):
     
     return artist_ids
 
-def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
-    """Get recommendations from Spotify"""
-    rec_url = "https://api.spotify.com/v1/recommendations"
-    
-    params = {
-        "limit": min(limit, 20),
-        "market": "US"
-    }
-    
-    # Add seeds carefully
-    seeds_used = 0
-    
-    if seed_genres and seeds_used < 5:
-        genres_to_use = seed_genres[:2]  # Max 2 genres
-        params["seed_genres"] = ",".join(genres_to_use)
-        seeds_used += len(genres_to_use)
-        print(f"🎵 Using genre seeds: {genres_to_use}")
-    
-    if seed_artists and seeds_used < 4:
-        artists_to_use = seed_artists[:1]  # Only 1 artist
-        params["seed_artists"] = ",".join(artists_to_use)
-        seeds_used += len(artists_to_use)
-        print(f"🎤 Using artist seeds: {artists_to_use}")
-    
-    # Only use basic mood parameters
-    if mood_params:
-        if "target_energy" in mood_params:
-            params["target_energy"] = mood_params["target_energy"]
-        if "target_valence" in mood_params:
-            params["target_valence"] = mood_params["target_valence"]
-        print(f"😊 Using mood params: energy={params.get('target_energy')}, valence={params.get('target_valence')}")
-    
-    print(f"🎯 API call with {seeds_used} seeds")
-    
-    try:
-        res = requests.get(rec_url, headers=headers, params=params, timeout=15)
-        
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, dict):
-                tracks = data.get("tracks", [])
-                track_uris = [track["uri"] for track in tracks if isinstance(track, dict) and "uri" in track]
-                print(f"✅ Recommendations SUCCESS: Got {len(track_uris)} tracks")
-                return track_uris
-            else:
-                print(f"❌ Invalid recommendations response format")
-                return []
-        else:
-            print(f"❌ Recommendations failed: {res.status_code} - {res.text}")
-            return []
-    except Exception as e:
-        print(f"❌ Exception in recommendations: {e}")
-        return []
-
 # Replace the search_spotify_tracks_fallback function in your moodque_engine.py with this improved version:
 
 def search_spotify_tracks_fallback(genre, headers, limit=20, mood_tags=None, 
@@ -587,83 +533,68 @@ def extract_tracks_from_search(search_response, playlist_type="clean"):
 
 # Also add this function to handle the 404 recommendations error:
 def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
-    """Get recommendations from Spotify with better error handling"""
+    """Try to get Spotify recommendations, fallback to Last.fm if Spotify fails"""
     rec_url = "https://api.spotify.com/v1/recommendations"
-    
-    # Ensure we have at least one seed
-    total_seeds = 0
-    if seed_genres:
-        total_seeds += len(seed_genres)
-    if seed_artists:
-        total_seeds += len(seed_artists)
-    
-    if total_seeds == 0:
-        print("⚠️ No seeds available for recommendations, using default")
-        seed_genres = ["pop"]
-    
+
+    # Build Spotify parameters
     params = {
-        "limit": min(limit, 100),  # Increase limit to get more options
+        "limit": min(limit, 20),
         "market": "US"
     }
-    
-    # Add seeds carefully (max 5 total)
-    seeds_used = 0
-    
-    if seed_genres and seeds_used < 5:
-        genres_to_use = seed_genres[:min(2, 5 - seeds_used)]
-        # Ensure genres are valid
-        valid_genres = [g for g in genres_to_use if g in SPOTIFY_VALID_GENRES]
-        if valid_genres:
-            params["seed_genres"] = ",".join(valid_genres)
-            seeds_used += len(valid_genres)
-            print(f"🎵 Using genre seeds: {valid_genres}")
-        else:
-            # Fallback to pop if no valid genres
-            params["seed_genres"] = "pop"
-            seeds_used += 1
-            print(f"🎵 Using fallback genre seed: pop")
-    
-    if seed_artists and seeds_used < 5:
-        artists_to_use = seed_artists[:min(1, 5 - seeds_used)]
+
+    total_seeds = 0
+    if seed_genres:
+        genres_to_use = seed_genres[:2]
+        params["seed_genres"] = ",".join(genres_to_use)
+        total_seeds += len(genres_to_use)
+        print(f"🎵 Using genre seeds: {genres_to_use}")
+
+    if seed_artists:
+        artists_to_use = seed_artists[:1]
         params["seed_artists"] = ",".join(artists_to_use)
-        seeds_used += len(artists_to_use)
+        total_seeds += len(artists_to_use)
         print(f"🎤 Using artist seeds: {artists_to_use}")
-    
-    # Add mood parameters (only basic ones)
-    if mood_params and isinstance(mood_params, dict):
-        # Only add the most reliable mood parameters
+
+    if mood_params:
         if "target_energy" in mood_params:
-            params["target_energy"] = min(max(mood_params["target_energy"], 0), 1)
+            params["target_energy"] = mood_params["target_energy"]
         if "target_valence" in mood_params:
-            params["target_valence"] = min(max(mood_params["target_valence"], 0), 1)
+            params["target_valence"] = mood_params["target_valence"]
         print(f"😊 Using mood params: energy={params.get('target_energy')}, valence={params.get('target_valence')}")
-    
-    print(f"🎯 Recommendations API call with {seeds_used} seeds")
+
+    print(f"🎯 API call with {total_seeds} seeds")
     print(f"📝 Full params: {params}")
-    
+
     try:
         res = requests.get(rec_url, headers=headers, params=params, timeout=15)
-        
-        print(f"📡 Recommendations response: {res.status_code}")
-        
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, dict):
                 tracks = data.get("tracks", [])
-                track_uris = [track["uri"] for track in tracks if isinstance(track, dict) and "uri" in track]
-                print(f"✅ Recommendations SUCCESS: Got {len(track_uris)} tracks")
-                return track_uris
+                uris = [t["uri"] for t in tracks if "uri" in t]
+                print(f"✅ Spotify SUCCESS: Got {len(uris)} tracks")
+                return uris
             else:
-                print(f"❌ Invalid recommendations response format")
-                return []
+                print("❌ Invalid format from Spotify response.")
         else:
-            print(f"❌ Recommendations failed: {res.status_code}")
-            if res.text:
-                print(f"❌ Error details: {res.text[:200]}")
-            return []
+            print(f"❌ Spotify recommendations failed: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"❌ Exception in recommendations: {e}")
-        return []
+        print(f"❌ Spotify exception: {e}")
+
+    # FALLBACK TO LAST.FM IF SPOTIFY FAILS
+    print("⚠️ Falling back to Last.fm recommendations...")
+    genre = seed_genres[0] if seed_genres else "pop"
+    birth_year = mood_params.get("birth_year") if mood_params else None
+    fallback_tracks = get_lastfm_recommendations(seed_artists, genre, birth_year)
+    fallback_uris = []
+
+    for t in fallback_tracks:
+        uri = search_spotify_track(t["artist"], t["track"], headers)
+        if uri:
+            fallback_uris.append(uri)
+
+    print(f"✅ Last.fm fallback SUCCESS: Got {len(fallback_uris)} tracks")
+    return fallback_uris
 
 # Replace the search_spotify_tracks_enhanced function in moodque_engine.py with this version:
 

@@ -1,10 +1,10 @@
 import os
 from moodque_engine import get_recommendations_enhanced, build_spotify_playlist_from_tracks
-from moodque_utilities import get_spotify_access_token
+from moodque_utilities import refresh_access_token
 
 # STEP 1: Set up Spotify access
 headers = {
-    "Authorization": f"Bearer {get_spotify_access_token()}",
+    "Authorization": f"Bearer {refresh_access_token()}",
     "Content-Type": "application/json"
 }
 
