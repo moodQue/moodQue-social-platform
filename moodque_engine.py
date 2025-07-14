@@ -64,7 +64,7 @@ def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artis
 
     return tracklist  # You’ll pass this to the playlist builder
 
-def build_spotify_playlist_from_tracks(headers, user_id, playlist_name, tracklist):
+def build_spotify_playlist_from_tracks(headers,playlist_name, tracklist):
     # Create a playlist
     create_url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
     payload = json.dumps({"name": playlist_name, "description": "Made with moodQue", "public": False})

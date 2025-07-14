@@ -26,6 +26,6 @@ tracklist = get_recommendations_enhanced(
 )
 
 # STEP 4: Create playlist on Spotify
-playlist_id = build_spotify_playlist_from_tracks(headers, user_id, playlist_name, tracklist)
+playlist_id = build_spotify_playlist_from_tracks(headers, playlist_name, tracklist)
 
 print(f"\n✅ Playlist created with ID: {playlist_id}")
