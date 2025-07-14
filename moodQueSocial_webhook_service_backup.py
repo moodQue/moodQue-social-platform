@@ -3,11 +3,15 @@ from flask import Flask, request, jsonify
 from moodque_engine import build_smart_playlist_enhanced  # Adjust path if needed
 import requests
 import os
+from moodque_auth import auth_bp
+
+
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 logger = logging.getLogger("moodQueSocial_webhook")
 logging.basicConfig(level=logging.INFO)
+app.register_blueprint(auth_bp)
 
 # --- Constants ---
 GLIDE_RETURN_WEBHOOK_URL = os.getenv("GLIDE_RETURN_WEBHOOK_URL")  # Set in Railway or .env
