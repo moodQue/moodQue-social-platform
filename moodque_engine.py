@@ -64,7 +64,7 @@ def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artis
 
     return tracklist  # You’ll pass this to the playlist builder
 
-def build_spotify_playlist_from_tracks(headers,playlist_name, tracklist):
+def build_spotify_playlist_from_tracks(headers, user_id,playlist_name, tracklist):
     # Create a playlist
     create_url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
     payload = json.dumps({"name": playlist_name, "description": "Made with moodQue", "public": False})
@@ -173,7 +173,7 @@ def create_new_playlist(headers, user_id, name, description="MoodQue Auto Playli
         print(f"❌ Exception creating playlist: {e}")
         return None
 
-def add_tracks_to_playlist(headers, playlist_id, track_uris):
+def add_tracks_to_playlist(headers, user_id, playlist_id, track_uris):
     """Add tracks to playlist with better error handling"""
     try:
         url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
