@@ -1,16 +1,19 @@
 import os
 import base64
 import requests
-from dotenv import load_dotenv
+
+# Only load .env if running locally (Railway sets env vars automatically)
+if os.getenv("RAILWAY_ENVIRONMENT") is None:
+    from dotenv import load_dotenv
+    load_dotenv()
+
 from firebase_admin_init import db
 
-
-
-load_dotenv()
-
+# Example variable usage
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
 refresh_token = os.getenv("SPOTIFY_REFRESH_TOKEN")
+
 
 
 def refresh_access_token():
