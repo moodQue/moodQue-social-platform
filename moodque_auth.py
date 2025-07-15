@@ -1,6 +1,9 @@
 import os
 import requests
 import urllib.parse
+import os
+import firebase_admin
+from firebase_admin import credentials, firestore
 from flask import Blueprint, redirect, request, jsonify
 from firebase_admin import firestore
 from firebase_admin_init import init_firebase_app
@@ -45,6 +48,15 @@ SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
 SCOPES = "playlist-modify-public playlist-modify-private"
 
+def init_firebase_app():
+    """
+    Initializes Firebase Admin SDK.
+    Only runs once.
+    """
+    if not firebase_admin._apps:
+        cred = credentials.Certificate("config/firebase_credentials.json")
+        firebase_admin.initialize_app(cred)
+        
 @auth_bp.route("/login")
 def login():
     query_params = {
