@@ -1,18 +1,17 @@
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# Only load .env locally; Railway sets env vars directly
-if os.getenv("RAILWAY_ENVIRONMENT") is None:
-    from dotenv import load_dotenv
-    load_dotenv()
+# Check if we're in a Railway environment with JSON in env
+if "FIREBASE_CREDENTIALS_JSON" in os.environ:
+    service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
+    cred = credentials.Certificate(service_account_info)
+else:
+    # Fallback to local file if not in Railway
+    cred_path = os.path.join("config", "firebase_credentials.json")
+    cred = credentials.Certificate(cred_path)
 
-# Path to the Firebase credentials file
-cred = credentials.Certificate("config/firebase_credentials.json")
-
-# Initialize Firebase app
+# Initialize Firebase app and Firestore
 firebase_admin.initialize_app(cred)
-
-# Firestore DB instance
 db = firestore.client()
-
