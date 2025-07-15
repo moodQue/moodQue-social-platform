@@ -1,5 +1,6 @@
 from datetime import datetime
 from firebase_admin import firestore
+from firebase_admin_init import init_firebase_app
 
 # Ensure Firebase is initialized (should be called in your main app or auth setup)
 try:

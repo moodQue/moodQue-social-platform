@@ -7,6 +7,7 @@ import random
 import uuid
 import json
 from moodque_utilities import search_spotify_track
+from firebase_admin_init import init_firebase_app
 from tracking import track_interaction
 
 
