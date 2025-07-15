@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 if not os.environ.get("RAILWAY_ENVIRONMENT"):
     load_dotenv()
 
+# Get Last.fm API key from environment
+LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY")
+
 def get_similar_artists(artist_name, limit=5):
     """Fetch similar artists from Last.fm with better error handling and debugging"""
     
