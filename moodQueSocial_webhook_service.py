@@ -4,8 +4,8 @@ import logging
 import requests
 from flask import Flask, request, redirect, jsonify
 from datetime import datetime
-
 from moodque_engine import build_smart_playlist_enhanced
+from tracking import track_interaction
 from moodque_utilities import (
     save_user_tokens,
     get_spotify_access_token,
@@ -153,6 +153,18 @@ def glide_social():
         playlist_url = None
 
     response_data = prepare_response_data(row_id, playlist_url, user_id=user_id, processing_time_start=processing_start)
+    
+    track_interaction(
+        user_id=user_id,
+        event_type="viewed_playlist",
+        data={
+            "playlist_id": response_data.get("playlist_id", ""),
+            "mood_tags": [mood] if mood else [],
+            "genres": [genre] if genre else [],
+            "event": event
+        }
+    )
+
 
     try:
         if webhook_return_url:
@@ -193,11 +205,16 @@ def playlist_webhook():
 
 
 # --- Social Interaction Tracker ---
-@app.route('/interaction', methods=['POST'])
-def record_interaction():
+@app.route("/track", methods=["POST"])
+def track_event():
     payload = request.get_json()
-    result = record_social_interaction(payload)
-    return jsonify(result), 200
+    track_interaction(
+        user_id=payload["user_id"],
+        event_type=payload["event_type"],
+        data=payload.get("data", {})
+    )
+    return jsonify({"status": "ok"}), 200
+
 
 
 # --- Machine Learning Feedback Endpoint ---
