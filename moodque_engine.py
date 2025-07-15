@@ -9,6 +9,8 @@ import json
 from moodque_utilities import search_spotify_track
 from firebase_admin_init import init_firebase_app
 from tracking import track_interaction
+from spotify_token_manager import refresh_access_token
+
 
 
 load_dotenv(dotenv_path=".env")
@@ -828,26 +830,27 @@ def emergency_track_search(headers, limit, playlist_type="clean"):
 
 # build_smart_playlist_enhanced function
 
-def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, 
-                                   playlist_type, favorite_artist, request_id=None):
-    """
-    Build a smart playlist with enhanced features
-    
-    Args:
-        event_name (str): Name of the playlist/event
-        genre (str): Music genre
-        time (int): Target duration in minutes
-        mood_tags (str): Mood tags for the playlist
-        search_keywords (str): Additional search keywords
-        playlist_type (str): "clean" or "explicit"
-        favorite_artist (str): Favorite artist(s)
-        request_id (str): Request ID for logging
-    
-    Returns:
-        str: Spotify playlist URL if successful, None if failed
-    """
+def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, favorite_artist, user_id=None, playlist_type="clean", request_id=None):
+    print(f"🎯 Building playlist for event: {event_name}")
+
+    # Step 1: Try to get user-specific token
+    access_token = None
+    if user_id:
+        try:
+            from spotify_token_manager import refresh_access_token
+            access_token = refresh_access_token(user_id)
+            print(f"🔓 Using user token for user_id={user_id}")
+        except Exception as e:
+            print(f"⚠️ Could not refresh token for user {user_id}: {e}")
+
+    # Step 2: Fallback to MoodQue app token
+    if not access_token:
+        from moodque_auth import get_spotify_access_token
+        access_token = get_spotify_access_token()
+        print("🔐 Fallback to MoodQue system token")
+
     logger_prefix = f"[{request_id}]" if request_id else ""
-    
+
     print(f"{logger_prefix} 🎧 Building playlist for event: '{event_name}'")
     print(f"{logger_prefix} 🔥 Genre Input: {genre}")
     print(f"{logger_prefix} 🎭 Mood Tag: {mood_tags}")
@@ -856,24 +859,19 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"{logger_prefix} ⏰ Target Duration: {time} minutes")
     print(f"{logger_prefix} 🚫 Content Filter: {playlist_type}")
 
-    # Clean up favorite_artist input
     if favorite_artist:
         favorite_artist = favorite_artist.replace("'", "'").strip()
 
     try:
-        # Get fresh access token
-        access_token = refresh_access_token()
         headers = {"Authorization": f"Bearer {access_token}"}
-        
-        # Convert time to target duration in milliseconds (average song is ~3.5 minutes)
+
         target_duration_minutes = int(time) if time else 30
-        estimated_track_count = max(10, int(target_duration_minutes / 3.5))  # Rough estimate
-        max_tracks = min(estimated_track_count * 2, 100)  # Get more options, limit to 100
-        
+        estimated_track_count = max(10, int(target_duration_minutes / 3.5))
+        max_tracks = min(estimated_track_count * 2, 100)
+
         print(f"{logger_prefix} 🎯 Target: {target_duration_minutes} minutes (~{estimated_track_count} tracks)")
 
-        # Get tracks using enhanced search
-        track_items = search_spotify_tracks_enhanced_with_duration(
+        track_items = search_spotify_tracks_enhanced(
             genre=genre,
             headers=headers,
             target_duration_minutes=target_duration_minutes,
@@ -888,176 +886,47 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
             print(f"{logger_prefix} ❌ No valid tracks found, cannot create playlist")
             return None
 
-        # Get user ID
-        user_id = get_spotify_user_id(headers)
-        if not user_id:
+        from moodque_utilities import get_spotify_user_id, create_new_playlist, add_tracks_to_playlist, calculate_playlist_duration
+        user_spotify_id = get_spotify_user_id(headers)
+        if not user_spotify_id:
             print(f"{logger_prefix} ❌ Could not get user ID")
             return None
 
-        # Create playlist
-        playlist_id = create_new_playlist(headers, user_id, event_name, f"MoodQue playlist for {event_name}")
+        playlist_id = create_new_playlist(headers, user_spotify_id, event_name, f"MoodQue playlist for {event_name}")
         if not playlist_id:
             print(f"{logger_prefix} ❌ Could not create playlist")
             return None
 
-        # Add tracks to playlist
         success = add_tracks_to_playlist(headers, playlist_id, track_items)
         if not success:
             print(f"{logger_prefix} ❌ Could not add tracks to playlist")
             return None
 
-        # Calculate final duration
         final_duration = calculate_playlist_duration(track_items, headers)
         print(f"{logger_prefix} ✅ Final playlist: {len(track_items)} tracks, {final_duration:.1f} minutes")
 
-        # Return the Spotify URL
         playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
         print(f"{logger_prefix} ✅ Playlist created successfully: {playlist_url}")
-        
-        track_interaction(
-    user_id=user_id,
-    event_type="built_playlist",
-    data={
-        "playlist_id": playlist_id,
-        "mood_tags": mood_tags if mood_tags else [],
-        "genres": [genre] if genre else [],
-        "event": event_name
-    }
-)
 
+        from tracking import track_interaction
+        track_interaction(
+            user_id=user_id,
+            event_type="built_playlist",
+            data={
+                "playlist_id": playlist_id,
+                "mood_tags": mood_tags if mood_tags else [],
+                "genres": [genre] if genre else [],
+                "event": event_name
+            }
+        )
 
         return playlist_url
-        
-        
-        
+
     except Exception as e:
         print(f"{logger_prefix} ❌ Error building playlist: {e}")
         import traceback
         traceback.print_exc()
         return None
-
-def search_spotify_tracks_enhanced_with_duration(genre, headers, target_duration_minutes=30, max_tracks=50, 
-                                               mood_tags=None, search_keywords=None, playlist_type="clean", 
-                                               favorite_artist=None):
-    """Enhanced search that prioritizes quality, manages duration, and mixes artists"""
-    try:
-        print(f"🔍 Enhanced search with duration - Target: {target_duration_minutes} minutes")
-        print(f"🚫 Content filter: {playlist_type}")
-        
-        # Parse genres
-        if isinstance(genre, str) and ',' in genre:
-            spotify_genres = parse_genre_list(genre)
-        else:
-            spotify_genre = sanitize_genre(genre) if genre else "pop"
-            spotify_genres = [spotify_genre] if spotify_genre else ["pop"]
-        
-        print(f"🎵 Using genres: {spotify_genres}")
-        
-        # Get artist IDs
-        artist_ids = []
-        favorite_artists = []
-        if favorite_artist:
-            try:
-                # Parse multiple artists
-                if isinstance(favorite_artist, str) and ',' in favorite_artist:
-                    favorite_artists = [a.strip() for a in favorite_artist.split(',')]
-                else:
-                    favorite_artists = [favorite_artist]
-                
-                artist_ids = get_artist_ids(favorite_artist, headers)
-                print(f"🎤 Found {len(artist_ids)} artist IDs for {len(favorite_artists)} artists")
-            except Exception as e:
-                print(f"⚠️ Artist lookup failed: {e}")
-        
-        # Get mood parameters
-        mood_params = {}
-        if mood_tags:
-            try:
-                mood_params = get_enhanced_mood_values(mood_tags)
-                print(f"😊 Mood parameters: {mood_params}")
-            except Exception as e:
-                print(f"⚠️ Mood params failed: {e}")
-        
-        # Collect tracks from different sources
-        artist_tracks = []
-        recommendation_tracks = []
-        fallback_tracks = []
-        
-        target_duration_ms = target_duration_minutes * 60 * 1000
-        
-        # Priority 1: Get tracks from each favorite artist
-        if favorite_artists:
-            print("🎯 Priority 1: Getting tracks from favorite artists...")
-            try:
-                for artist in favorite_artists:
-                    tracks = search_artist_popular_tracks_with_duration(
-                        artist, headers, limit=8  # Get 8 tracks per artist
-                    )
-                    if tracks:
-                        # Filter explicit content immediately
-                        clean_tracks = filter_explicit_tracks(tracks, playlist_type)
-                        artist_tracks.extend(clean_tracks)
-                        print(f"✅ Got {len(clean_tracks)} clean tracks from {artist}")
-                
-                print(f"✅ Total artist tracks: {len(artist_tracks)}")
-            except Exception as e:
-                print(f"⚠️ Favorite artist search failed: {e}")
-        
-        # Priority 2: Get recommendations (limit quantity)
-        print("🎯 Priority 2: Getting recommendations...")
-        try:
-            rec_tracks = get_recommendations_enhanced(
-                headers=headers,
-                limit=15,  # Limit recommendations
-                seed_genres=spotify_genres,
-                seed_artists=artist_ids,
-                mood_params=mood_params
-            )
-            
-            if rec_tracks:
-                # Get duration info and filter explicit
-                rec_with_duration = get_tracks_with_duration(rec_tracks, headers)
-                clean_rec_tracks = filter_explicit_tracks(rec_with_duration, playlist_type)
-                recommendation_tracks.extend(clean_rec_tracks)
-                print(f"✅ Got {len(clean_rec_tracks)} clean recommendation tracks")
-        except Exception as e:
-            print(f"⚠️ Recommendations failed: {e}")
-        
-        # Priority 3: High-quality fallback (if needed)
-        estimated_duration = sum(t['duration_ms'] for t in artist_tracks + recommendation_tracks)
-        if estimated_duration < target_duration_ms * 0.8:
-            print("🎯 Priority 3: Getting high-quality fallback tracks...")
-            try:
-                needed_duration = target_duration_ms - estimated_duration
-                needed_tracks = max(5, int(needed_duration / (3.5 * 60 * 1000)))
-                
-                fallback_uris = search_high_quality_tracks(
-                    spotify_genres[0], headers, needed_tracks, mood_tags, search_keywords, playlist_type
-                )
-                
-                if fallback_uris:
-                    fallback_with_duration = get_tracks_with_duration(fallback_uris, headers)
-                    clean_fallback_tracks = filter_explicit_tracks(fallback_with_duration, playlist_type)
-                    fallback_tracks.extend(clean_fallback_tracks)
-                    print(f"✅ Got {len(clean_fallback_tracks)} clean fallback tracks")
-            except Exception as e:
-                print(f"⚠️ Fallback search failed: {e}")
-        
-        # Now intelligently mix the tracks
-        mixed_tracks = mix_tracks_intelligently(
-            artist_tracks, recommendation_tracks, fallback_tracks, 
-            target_duration_ms, favorite_artists
-        )
-        
-        final_uris = [track['uri'] for track in mixed_tracks]
-        final_duration = sum(track['duration_ms'] for track in mixed_tracks) / 60000
-        
-        print(f"✅ Search complete: {len(final_uris)} tracks, {final_duration:.1f} minutes")
-        return final_uris
-        
-    except Exception as e:
-        print(f"❌ Critical error in enhanced search: {e}")
-        return []
 
 def search_artist_popular_tracks_with_duration(artist_name, headers, limit=10):
     """Search for an artist's popular tracks and include duration info with explicit filtering"""
