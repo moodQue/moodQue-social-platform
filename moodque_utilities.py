@@ -4,6 +4,7 @@ import requests
 from moodque_auth import get_spotify_access_token
 
 
+
 # Only load .env if running locally (Railway sets env vars automatically)
 if os.getenv("RAILWAY_ENVIRONMENT") is None:
     from dotenv import load_dotenv
