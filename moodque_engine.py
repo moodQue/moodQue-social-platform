@@ -6,10 +6,20 @@ import base64
 import random
 import uuid
 import json
+import traceback
 from moodque_utilities import search_spotify_track
 from firebase_admin_init import init_firebase_app
 from tracking import track_interaction
-from spotify_token_manager import refresh_access_token
+from moodque_utilities import get_valid_access_token
+from moodque_utilities import (
+    get_spotify_user_id,
+    create_new_playlist,
+    add_tracks_to_playlist,
+    calculate_playlist_duration,
+    search_spotify_tracks_enhanced_with_duration
+)
+
+
 
 
 
@@ -830,28 +840,11 @@ def emergency_track_search(headers, limit, playlist_type="clean"):
 
 # build_smart_playlist_enhanced function
 
-def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords, favorite_artist, user_id=None, playlist_type="clean", request_id=None):
-    print(f"🎯 Building playlist for event: {event_name}")
-
-    # Step 1: Try to get user-specific token
-    access_token = None
-    if user_id:
-        try:
-            from spotify_token_manager import refresh_access_token
-            access_token = refresh_access_token(user_id)
-            print(f"🔓 Using user token for user_id={user_id}")
-        except Exception as e:
-            print(f"⚠️ Could not refresh token for user {user_id}: {e}")
-
-    # Step 2: Fallback to MoodQue app token
-    if not access_token:
-        from moodque_auth import get_spotify_access_token
-        access_token = get_spotify_access_token()
-        print("🔐 Fallback to MoodQue system token")
-
+def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
+                                   favorite_artist, user_id=None, playlist_type="clean",
+                                   request_id=None):
     logger_prefix = f"[{request_id}]" if request_id else ""
-
-    print(f"{logger_prefix} 🎧 Building playlist for event: '{event_name}'")
+    print(f"{logger_prefix} 🎯 Building playlist for event: '{event_name}'")
     print(f"{logger_prefix} 🔥 Genre Input: {genre}")
     print(f"{logger_prefix} 🎭 Mood Tag: {mood_tags}")
     print(f"{logger_prefix} 🧠 Search Keywords: {search_keywords}")
@@ -859,19 +852,27 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     print(f"{logger_prefix} ⏰ Target Duration: {time} minutes")
     print(f"{logger_prefix} 🚫 Content Filter: {playlist_type}")
 
-    if favorite_artist:
-        favorite_artist = favorite_artist.replace("'", "'").strip()
+    access_token = None
+    if user_id:
+        try:
+            access_token = refresh_access_token(user_id)
+            print(f"{logger_prefix} 🔓 Using user token for user_id={user_id}")
+        except Exception as e:
+            print(f"{logger_prefix} ⚠️ Could not refresh token for user {user_id}: {e}")
+
+    if not access_token:
+        from moodque_auth import get_spotify_access_token
+        access_token = get_spotify_access_token()
+        print(f"{logger_prefix} 🔐 Fallback to MoodQue system token")
+
+    headers = {"Authorization": f"Bearer {access_token}"}
 
     try:
-        headers = {"Authorization": f"Bearer {access_token}"}
-
         target_duration_minutes = int(time) if time else 30
         estimated_track_count = max(10, int(target_duration_minutes / 3.5))
         max_tracks = min(estimated_track_count * 2, 100)
 
-        print(f"{logger_prefix} 🎯 Target: {target_duration_minutes} minutes (~{estimated_track_count} tracks)")
-
-        track_items = search_spotify_tracks_enhanced(
+        track_items = search_spotify_tracks_enhanced_with_duration(
             genre=genre,
             headers=headers,
             target_duration_minutes=target_duration_minutes,
@@ -886,13 +887,13 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
             print(f"{logger_prefix} ❌ No valid tracks found, cannot create playlist")
             return None
 
-        from moodque_utilities import get_spotify_user_id, create_new_playlist, add_tracks_to_playlist, calculate_playlist_duration
-        user_spotify_id = get_spotify_user_id(headers)
-        if not user_spotify_id:
-            print(f"{logger_prefix} ❌ Could not get user ID")
+        spotify_user_id = get_spotify_user_id(headers)
+        if not spotify_user_id:
+            print(f"{logger_prefix} ❌ Could not get Spotify user ID")
             return None
 
-        playlist_id = create_new_playlist(headers, user_spotify_id, event_name, f"MoodQue playlist for {event_name}")
+        playlist_id = create_new_playlist(headers, spotify_user_id, event_name,
+                                          f"MoodQue playlist for {event_name}")
         if not playlist_id:
             print(f"{logger_prefix} ❌ Could not create playlist")
             return None
@@ -908,7 +909,6 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
         print(f"{logger_prefix} ✅ Playlist created successfully: {playlist_url}")
 
-        from tracking import track_interaction
         track_interaction(
             user_id=user_id,
             event_type="built_playlist",
@@ -924,7 +924,6 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
 
     except Exception as e:
         print(f"{logger_prefix} ❌ Error building playlist: {e}")
-        import traceback
         traceback.print_exc()
         return None
 

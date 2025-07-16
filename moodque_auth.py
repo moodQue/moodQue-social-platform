@@ -1,52 +1,77 @@
 import os
-import requests
+import base64
+import json
+import datetime
+import time
 import urllib.parse
-import os
+import requests
+
+from flask import Blueprint, request, jsonify, redirect
 import firebase_admin
 from firebase_admin import credentials, firestore
-from flask import Blueprint, redirect, request, jsonify
-from firebase_admin import firestore
-from firebase_admin_init import init_firebase_app
+db = firestore.client()
+
 
 auth_bp = Blueprint("auth", __name__)
 
-# Ensure Firebase is initialized
-init_firebase_app()
 
-db = firestore.client()
 
-def get_spotify_access_token(user_id):
-    """
-    Retrieves stored Spotify access token for the given user_id.
-    Returns None if no token found or if expired.
-    """
-    try:
-        user_doc = db.collection("users").document(user_id).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            token = user_data.get("spotify_access_token")
-            token_expiry = user_data.get("spotify_token_expires_at")
-
-            # Optionally check for expiration (if stored)
-            if token and token_expiry:
-                import time
-                if time.time() < float(token_expiry):
-                    return token
-                else:
-                    print(f"⚠️ Token for user {user_id} is expired.")
-                    return None
-            return token
-        else:
-            print(f"❌ No user found with ID: {user_id}")
-            return None
-    except Exception as e:
-        print(f"🔥 Error retrieving token for user {user_id}: {e}")
-        return None
-
+# Constants
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
-SCOPES = "playlist-modify-public playlist-modify-private"
+SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
+SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "https://example.com/callback")
+SCOPES = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/datastore"]
+
+
+def get_spotify_access_token():
+    """
+    Fetches a new access token using the app's stored refresh token.
+    """
+    auth_header = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {auth_header}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": SPOTIFY_REFRESH_TOKEN
+    }
+    response = requests.post("https://accounts.spotify.com/api/token", headers=headers, data=data)
+
+    if response.status_code != 200:
+        print("❌ Failed to refresh app access token", response.text)
+        raise Exception("Spotify token refresh failed")
+
+    token_info = response.json()
+    return token_info["access_token"]
+
+def refresh_token_with_spotify(refresh_token):
+    """
+    Refresh a user's Spotify token using their refresh_token.
+    Returns a dict with access_token and expires_at.
+    """
+    auth_header = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {auth_header}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token
+    }
+
+    response = requests.post("https://accounts.spotify.com/api/token", headers=headers, data=data)
+    if response.status_code != 200:
+        print("❌ Failed to refresh user token", response.text)
+        raise Exception("Spotify user token refresh failed")
+
+    token_data = response.json()
+    return {
+        "access_token": token_data["access_token"],
+        "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data["expires_in"])).isoformat()
+    }
+
 
 def init_firebase_app():
     """
@@ -89,10 +114,31 @@ def callback():
         return jsonify({"error": "Token exchange failed", "details": response.text}), 400
 
     token_data = response.json()
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in")
+
+    # Use the access token to get the Spotify user ID
+    user_profile_resp = requests.get(
+        "https://api.spotify.com/v1/me",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    if user_profile_resp.status_code != 200:
+        return jsonify({"error": "Failed to get user profile", "details": user_profile_resp.text}), 400
+
+    user_profile = user_profile_resp.json()
+    user_id = user_profile["id"]
+
+    # Store tokens in Firestore
+    db.collection("users").document(user_id).set({
+        "spotify_access_token": access_token,
+        "spotify_refresh_token": refresh_token,
+        "spotify_token_expires_at": str(time.time() + int(expires_in))
+    }, merge=True)
+
     return jsonify({
-        "access_token": token_data.get("access_token"),
-        "refresh_token": token_data.get("refresh_token"),
-        "expires_in": token_data.get("expires_in"),
-        "token_type": token_data.get("token_type"),
-        "scope": token_data.get("scope"),
+        "message": f"Spotify linked successfully for user {user_id}",
+        "user_id": user_id
     })
+
