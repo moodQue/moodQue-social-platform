@@ -1,3 +1,5 @@
+# moodque_engine.py
+
 from dotenv import load_dotenv
 from lastfm_recommender import get_recommendations
 import os
@@ -8,8 +10,14 @@ import uuid
 import json
 import traceback
 
-from firebase_admin_init import init_firebase_app, db
+# Import Firebase initialization
+import firebase_admin_init
+from firebase_admin_init import db
+
+# Import tracking
 from tracking import track_interaction
+
+# Import utilities
 from moodque_utilities import (
     get_valid_access_token,
     get_spotify_user_id,
@@ -19,10 +27,6 @@ from moodque_utilities import (
     search_spotify_tracks_enhanced_with_duration,
     search_spotify_track
 )
-
-
-
-
 
 load_dotenv(dotenv_path=".env")
 

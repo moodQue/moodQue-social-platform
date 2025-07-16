@@ -1,45 +1,38 @@
-from datetime import datetime
-from firebase_admin import firestore
-from firebase_admin_init import db
+import os
+import json
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-def track_interaction(user_id, event_type, data):
+def init_firebase_app():
     """
-    Logs a user interaction into the Firestore 'interactions' collection.
-
-    Args:
-        user_id (str): Unique identifier for the user.
-        event_type (str): Type of interaction (e.g., 'like', 'play', 'skip', 'built_playlist').
-        data (dict): Dictionary with additional info like mood_tags, genres, etc.
-
-    Example data:
-        {
-            "playlist_id": "abc123",
-            "mood_tags": ["happy", "focus"],
-            "genres": ["hip-hop", "funk"],
-            "event": "morning_run"
-        }
+    Initialize Firebase Admin SDK only if not already initialized.
+    Handles both Railway (env var) and local (file) configurations.
     """
-    interaction = {
-        "user_id": user_id,
-        "event_type": event_type,
-        "timestamp": datetime.utcnow(),
-        **data
-    }
+    if not firebase_admin._apps:
+        try:
+            # Check if we're in a Railway environment with JSON in env
+            if "FIREBASE_CREDENTIALS_JSON" in os.environ:
+                print("🔥 Loading Firebase credentials from environment variable")
+                service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
+                cred = credentials.Certificate(service_account_info)
+            elif "FIREBASE_ADMIN_JSON" in os.environ:
+                print("🔥 Loading Firebase credentials from FIREBASE_ADMIN_JSON")
+                service_account_info = json.loads(os.environ["FIREBASE_ADMIN_JSON"])
+                cred = credentials.Certificate(service_account_info)
+            else:
+                # Fallback to local file if not in Railway
+                print("🔥 Loading Firebase credentials from local file")
+                cred_path = os.path.join("config", "firebase_credentials.json")
+                cred = credentials.Certificate(cred_path)
+            
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase initialized successfully")
+        except Exception as e:
+            print(f"❌ Firebase initialization failed: {e}")
+            raise
 
-    try:
-        db.collection("interactions").add(interaction)
-        print(f"✅ Interaction logged successfully: {event_type}")
-    except Exception as e:
-        print(f"❌ Failed to log interaction: {e}")
+# Initialize Firebase when module is imported
+init_firebase_app()
 
-# Legacy function for backward compatibility
-def track_interaction_legacy(user_id, playlist_id, interaction_type, context_data):
-    """
-    Legacy function for backward compatibility.
-    Maps old parameter structure to new one.
-    """
-    data = {
-        "playlist_id": playlist_id,
-        **context_data
-    }
-    track_interaction(user_id, interaction_type, data)
+# Create the Firestore client
+db = firestore.client()

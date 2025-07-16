@@ -1,5 +1,6 @@
 from datetime import datetime
 from firebase_admin import firestore
+import firebase_admin_init
 from firebase_admin_init import db
 
 def track_interaction(user_id, event_type, data):

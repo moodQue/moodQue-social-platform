@@ -6,7 +6,8 @@ from flask import Flask, request, redirect, jsonify
 from datetime import datetime
 
 # Initialize Firebase first
-from firebase_admin_init import init_firebase_app, db
+import firebase_admin_init
+from firebase_admin_init import db
 
 # Now import other modules
 from moodque_engine import build_smart_playlist_enhanced
