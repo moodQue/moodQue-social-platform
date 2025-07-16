@@ -903,7 +903,9 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
             print(f"{logger_prefix} ❌ Could not create playlist")
             return None
 
-        success = add_tracks_to_playlist(headers, playlist_id, track_items)
+        # Extract URIs from track items
+        track_uris = [track['uri'] if isinstance(track, dict) else track for track in track_items]
+        success = add_tracks_to_playlist(headers, playlist_id, track_uris)
         if not success:
             print(f"{logger_prefix} ❌ Could not add tracks to playlist")
             return None

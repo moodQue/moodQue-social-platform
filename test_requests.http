@@ -1,0 +1,39 @@
+# MoodQue API Tests
+# Use REST Client extension to run these
+
+### Test Health Check
+GET https://web-production-ed9ad.up.railway.app/health_check
+
+### Test Firebase Connection
+GET https://web-production-ed9ad.up.railway.app/test_firebase
+
+### Test Playlist Creation
+POST https://web-production-ed9ad.up.railway.app/glide_social
+Content-Type: application/json
+
+{
+  "row_id": "test_123",
+  "user_id": "test_user_456",
+  "genre": "pop",
+  "artist": "Taylor Swift",
+  "mood": "happy",
+  "event": "My Test Playlist",
+  "time": 15,
+  "playlist_type": "clean"
+}
+
+### Test Tracking Endpoint
+POST https://web-production-ed9ad.up.railway.app/track
+Content-Type: application/json
+
+{
+  "user_id": "test_user_123",
+  "event_type": "test_interaction",
+  "data": {
+    "test": true,
+    "source": "vscode_test"
+  }
+}
+
+### Test User Tokens
+GET https://web-production-ed9ad.up.railway.app/test_user_tokens/test_user_123
