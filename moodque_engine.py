@@ -7,16 +7,17 @@ import random
 import uuid
 import json
 import traceback
-from moodque_utilities import search_spotify_track
-from firebase_admin_init import init_firebase_app
+
+from firebase_admin_init import init_firebase_app, db
 from tracking import track_interaction
-from moodque_utilities import get_valid_access_token
 from moodque_utilities import (
+    get_valid_access_token,
     get_spotify_user_id,
     create_new_playlist,
     add_tracks_to_playlist,
     calculate_playlist_duration,
-    search_spotify_tracks_enhanced_with_duration
+    search_spotify_tracks_enhanced_with_duration,
+    search_spotify_track
 )
 
 
@@ -910,15 +911,15 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         print(f"{logger_prefix} ✅ Playlist created successfully: {playlist_url}")
 
         track_interaction(
-            user_id=user_id,
-            event_type="built_playlist",
-            data={
-                "playlist_id": playlist_id,
-                "mood_tags": mood_tags if mood_tags else [],
-                "genres": [genre] if genre else [],
-                "event": event_name
-            }
-        )
+    user_id=user_id,
+    event_type="built_playlist",
+    data={
+        "playlist_id": playlist_id,
+        "mood_tags": mood_tags if mood_tags else [],
+        "genres": [genre] if genre else [],
+        "event": event_name
+    }
+)
 
         return playlist_url
 

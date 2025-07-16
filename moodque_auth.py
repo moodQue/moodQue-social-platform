@@ -9,12 +9,8 @@ import requests
 from flask import Blueprint, request, jsonify, redirect
 import firebase_admin
 from firebase_admin import credentials, firestore
-db = firestore.client()
-
 
 auth_bp = Blueprint("auth", __name__)
-
-
 
 # Constants
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
@@ -23,6 +19,26 @@ SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "https://example.com/callback")
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/datastore"]
 
+def init_firebase_app():
+    """
+    Initializes Firebase Admin SDK.
+    Only runs once.
+    """
+    if not firebase_admin._apps:
+        # Check if we're in a Railway environment with JSON in env
+        if "FIREBASE_CREDENTIALS_JSON" in os.environ:
+            service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
+            cred = credentials.Certificate(service_account_info)
+        else:
+            # Fallback to local file if not in Railway
+            cred_path = os.path.join("config", "firebase_credentials.json")
+            cred = credentials.Certificate(cred_path)
+        
+        firebase_admin.initialize_app(cred)
+
+# Initialize Firebase before creating the client
+init_firebase_app()
+db = firestore.client()
 
 def get_spotify_access_token():
     """
@@ -72,16 +88,6 @@ def refresh_token_with_spotify(refresh_token):
         "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data["expires_in"])).isoformat()
     }
 
-
-def init_firebase_app():
-    """
-    Initializes Firebase Admin SDK.
-    Only runs once.
-    """
-    if not firebase_admin._apps:
-        cred = credentials.Certificate("config/firebase_credentials.json")
-        firebase_admin.initialize_app(cred)
-        
 @auth_bp.route("/login")
 def login():
     query_params = {
@@ -141,4 +147,3 @@ def callback():
         "message": f"Spotify linked successfully for user {user_id}",
         "user_id": user_id
     })
-

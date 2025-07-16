@@ -1,22 +1,45 @@
-import os
-import json
-import firebase_admin
-from firebase_admin import credentials, firestore
+from datetime import datetime
+from firebase_admin import firestore
+from firebase_admin_init import db
 
-def init_firebase_app():
-    if not firebase_admin._apps:
-        cred = credentials.Certificate("config/firebase_credentials.json")
-        firebase_admin.initialize_app(cred)
+def track_interaction(user_id, event_type, data):
+    """
+    Logs a user interaction into the Firestore 'interactions' collection.
 
-# Check if we're in a Railway environment with JSON in env
-if "FIREBASE_CREDENTIALS_JSON" in os.environ:
-    service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
-    cred = credentials.Certificate(service_account_info)
-else:
-    # Fallback to local file if not in Railway
-    cred_path = os.path.join("config", "firebase_credentials.json")
-    cred = credentials.Certificate(cred_path)
+    Args:
+        user_id (str): Unique identifier for the user.
+        event_type (str): Type of interaction (e.g., 'like', 'play', 'skip', 'built_playlist').
+        data (dict): Dictionary with additional info like mood_tags, genres, etc.
 
-# Initialize Firebase app and Firestore
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+    Example data:
+        {
+            "playlist_id": "abc123",
+            "mood_tags": ["happy", "focus"],
+            "genres": ["hip-hop", "funk"],
+            "event": "morning_run"
+        }
+    """
+    interaction = {
+        "user_id": user_id,
+        "event_type": event_type,
+        "timestamp": datetime.utcnow(),
+        **data
+    }
+
+    try:
+        db.collection("interactions").add(interaction)
+        print(f"✅ Interaction logged successfully: {event_type}")
+    except Exception as e:
+        print(f"❌ Failed to log interaction: {e}")
+
+# Legacy function for backward compatibility
+def track_interaction_legacy(user_id, playlist_id, interaction_type, context_data):
+    """
+    Legacy function for backward compatibility.
+    Maps old parameter structure to new one.
+    """
+    data = {
+        "playlist_id": playlist_id,
+        **context_data
+    }
+    track_interaction(user_id, interaction_type, data)

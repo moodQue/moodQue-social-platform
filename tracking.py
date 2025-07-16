@@ -1,42 +1,45 @@
 from datetime import datetime
 from firebase_admin import firestore
-from firebase_admin_init import init_firebase_app
+from firebase_admin_init import db
 
-# Ensure Firebase is initialized (should be called in your main app or auth setup)
-try:
-    db = firestore.client()
-except Exception as e:
-    raise RuntimeError("Firestore client could not be initialized. Make sure Firebase is set up.") from e
-
-def track_interaction(user_id, playlist_id, interaction_type, context_data):
+def track_interaction(user_id, event_type, data):
     """
     Logs a user interaction into the Firestore 'interactions' collection.
 
     Args:
         user_id (str): Unique identifier for the user.
-        playlist_id (str): ID of the playlist interacted with.
-        interaction_type (str): Type of interaction (e.g., 'like', 'play', 'skip').
-        context_data (dict): Dictionary with additional info like mood_tags, genres, etc.
+        event_type (str): Type of interaction (e.g., 'like', 'play', 'skip', 'built_playlist').
+        data (dict): Dictionary with additional info like mood_tags, genres, etc.
 
-    Example context_data:
+    Example data:
         {
+            "playlist_id": "abc123",
             "mood_tags": ["happy", "focus"],
-            "seed_artists": ["Pharrell", "Snoop Dogg"],
-            "genres": ["hip hop", "funk"],
-            "energy_level": 0.8,
-            "source_event": "morning_run"
+            "genres": ["hip-hop", "funk"],
+            "event": "morning_run"
         }
     """
     interaction = {
         "user_id": user_id,
-        "playlist_id": playlist_id,
-        "interaction_type": interaction_type,
+        "event_type": event_type,
         "timestamp": datetime.utcnow(),
-        **context_data
+        **data
     }
 
     try:
         db.collection("interactions").add(interaction)
-        print("✅ Interaction logged successfully.")
+        print(f"✅ Interaction logged successfully: {event_type}")
     except Exception as e:
         print(f"❌ Failed to log interaction: {e}")
+
+# Legacy function for backward compatibility
+def track_interaction_legacy(user_id, playlist_id, interaction_type, context_data):
+    """
+    Legacy function for backward compatibility.
+    Maps old parameter structure to new one.
+    """
+    data = {
+        "playlist_id": playlist_id,
+        **context_data
+    }
+    track_interaction(user_id, interaction_type, data)
