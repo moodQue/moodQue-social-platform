@@ -289,3 +289,80 @@ def internal_error(error):
 
 if __name__ == '__main__':
     app.run(debug=True)
+    
+# Add these test endpoints to your moodQueSocial_webhook_service.py
+# Make sure they're properly indented and placed after your existing routes
+
+@app.route('/test_firebase', methods=['GET'])
+def test_firebase():
+    """Test Firebase connection and data writing"""
+    try:
+        test_doc = {
+            "test_timestamp": datetime.now().isoformat(),
+            "message": "Firebase connection test",
+            "status": "working"
+        }
+        
+        doc_ref = db.collection("test_connection").add(test_doc)
+        
+        return jsonify({
+            "status": "success",
+            "message": "Firebase is working properly",
+            "test_doc_id": doc_ref[1].id
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error", 
+            "message": f"Firebase error: {str(e)}"
+        }), 500
+
+@app.route('/health_check', methods=['GET'])
+def health_check():
+    """Check Firebase collections and recent activity"""
+    try:
+        results = {}
+        
+        # Count documents in each collection
+        collections = ["users", "interactions", "ml_feedback"]
+        for collection_name in collections:
+            count = len(list(db.collection(collection_name).limit(10).stream()))
+            results[f"{collection_name}_count"] = count
+        
+        return jsonify({
+            "status": "success",
+            "firebase_health": "operational",
+            "collections": results
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/test_user_tokens/<user_id>', methods=['GET'])
+def test_user_tokens(user_id):
+    """Test user token storage and retrieval"""
+    try:
+        from moodque_utilities import get_user_tokens, save_user_tokens
+        
+        # Test saving tokens
+        save_user_tokens(user_id, "test_access_token", "test_refresh_token")
+        
+        # Test retrieving tokens
+        tokens = get_user_tokens(user_id)
+        
+        return jsonify({
+            "status": "success",
+            "user_id": user_id,
+            "tokens_saved": True,
+            "tokens_retrieved": tokens is not None,
+            "token_data": tokens
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
