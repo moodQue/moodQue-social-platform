@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import requests
+from moodque_auth import auth_bp
 from flask import Flask, request, redirect, jsonify
 from datetime import datetime
 
@@ -25,6 +26,7 @@ from moodque_utilities import (
 app = Flask(__name__)
 logger = logging.getLogger("moodQueSocial_webhook")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+app.register_blueprint(auth_bp)
 
 # --- Spotify OAuth Callback ---
 @app.route('/callback')
