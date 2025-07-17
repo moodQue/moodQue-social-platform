@@ -103,50 +103,90 @@ def login():
     auth_url = "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(query_params)
     return redirect(auth_url)
 
+# Update your callback function in moodque_auth.py or webhook service
+
 @auth_bp.route("/callback")
 def callback():
     code = request.args.get("code")
+    state = request.args.get("state", "")
+    
     if not code:
-        return jsonify({"error": "No code provided"}), 400
+        # Redirect back to Glide with error
+        return redirect("https://moodque.glide.page?spotify_error=no_code")
 
+    # Parse state to get user info and return URL
+    state_params = {}
+    if state:
+        for param in state.split("&"):
+            if "=" in param:
+                key, value = param.split("=", 1)
+                state_params[key] = urllib.parse.unquote(value)
+    
+    user_id = state_params.get("user_id", "anonymous")
+    return_url = state_params.get("return_url", "https://moodque.glide.page")
+
+    # Exchange code for tokens
     token_url = "https://accounts.spotify.com/api/token"
     payload = {
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": SPOTIFY_REDIRECT_URI,
-        "client_id": SPOTIFY_CLIENT_ID,
-        "client_secret": SPOTIFY_CLIENT_SECRET,
+        "redirect_uri": os.getenv("SPOTIFY_REDIRECT_URI"),
+        "client_id": os.getenv("SPOTIFY_CLIENT_ID"),
+        "client_secret": os.getenv("SPOTIFY_CLIENT_SECRET"),
     }
 
     response = requests.post(token_url, data=payload)
     if response.status_code != 200:
-        return jsonify({"error": "Token exchange failed", "details": response.text}), 400
+        # Redirect back to Glide with error
+        return redirect(f"{return_url}?spotify_error=token_failed")
 
     token_data = response.json()
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
-    expires_in = token_data.get("expires_in")
 
-    # Use the access token to get the Spotify user ID
+    # Get Spotify user profile
     user_profile_resp = requests.get(
         "https://api.spotify.com/v1/me",
         headers={"Authorization": f"Bearer {access_token}"}
     )
 
     if user_profile_resp.status_code != 200:
-        return jsonify({"error": "Failed to get user profile", "details": user_profile_resp.text}), 400
+        # Redirect back to Glide with error
+        return redirect(f"{return_url}?spotify_error=profile_failed")
 
-    user_profile = user_profile_resp.json()
-    user_id = user_profile["id"]
+    spotify_user = user_profile_resp.json()
+    spotify_user_id = spotify_user["id"]
+    spotify_display_name = spotify_user.get("display_name", spotify_user_id)
 
-    # Store tokens in Firestore
-    db.collection("users").document(user_id).set({
-        "spotify_access_token": access_token,
-        "spotify_refresh_token": refresh_token,
-        "spotify_token_expires_at": str(time.time() + int(expires_in))
-    }, merge=True)
+    # Save tokens with both Glide user_id and Spotify user_id
+    try:
+        db.collection("users").document(spotify_user_id).set({
+            "glide_user_id": user_id,
+            "spotify_user_id": spotify_user_id,
+            "spotify_access_token": access_token,
+            "spotify_refresh_token": refresh_token,
+            "spotify_token_expires_at": str(time.time() + token_data.get("expires_in", 3600)),
+            "spotify_display_name": spotify_display_name,
+            "connected_at": datetime.now().isoformat()
+        }, merge=True)
+        
+        print(f"✅ Spotify connected for Glide user {user_id} -> Spotify user {spotify_user_id}")
+        
+        # Redirect back to Glide with success info
+        success_params = {
+            "spotify_connected": "true",
+            "spotify_user": spotify_user_id,
+            "spotify_name": spotify_display_name,
+            "connection_status": "success"
+        }
+        
+        # Build success URL
+        success_url = f"{return_url}?" + "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in success_params.items()])
+        return redirect(success_url)
+        
+    except Exception as e:
+        print(f"❌ Error saving to Firebase: {e}")
+        return redirect(f"{return_url}?spotify_error=database_failed")
 
-    return jsonify({
-        "message": f"Spotify linked successfully for user {user_id}",
-        "user_id": user_id
-    })
+# Don't forget to add this import at the top if not already there:
+import urllib.parse
