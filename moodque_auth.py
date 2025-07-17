@@ -5,6 +5,9 @@ import datetime
 import time
 import urllib.parse
 import requests
+import urllib.parse
+from dotenv import load_dotenv
+load_dotenv()
 
 from flask import Blueprint, request, jsonify, redirect
 import firebase_admin
@@ -17,13 +20,8 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "https://example.com/callback")
-SCOPES = [
-    "playlist-modify-private",
-    "playlist-modify-public", 
-    "user-read-private",
-    "user-read-email"
-]
-
+SCOPES = "playlist-modify-private playlist-modify-public user-read-private user-read-email"
+#update scopes moodque auth
 def init_firebase_app():
     """
     Initializes Firebase Admin SDK.
