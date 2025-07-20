@@ -1,3 +1,5 @@
+# Add this import at the top of moodque_auth.py
+
 import os
 import base64
 import json
@@ -5,13 +7,16 @@ import datetime
 import time
 import urllib.parse
 import requests
-import urllib.parse
 from dotenv import load_dotenv
+from datetime import datetime  # ADD THIS LINE - was missing!
+
 load_dotenv()
 
 from flask import Blueprint, request, jsonify, redirect
 import firebase_admin
 from firebase_admin import credentials, firestore
+
+# Rest of your existing moodque_auth.py code remains the same...
 
 auth_bp = Blueprint("auth", __name__)
 

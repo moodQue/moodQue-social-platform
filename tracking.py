@@ -23,15 +23,18 @@ def track_interaction(user_id, event_type, data):
     interaction = {
         "user_id": user_id,
         "event_type": event_type,
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.now(),  # FIXED: was datetime.utcnow()
+        "created_at": datetime.now().isoformat(),  # Add this for consistency
         **data
     }
 
     try:
         db.collection("interactions").add(interaction)
         print(f"✅ Interaction logged successfully: {event_type}")
+        return True
     except Exception as e:
         print(f"❌ Failed to log interaction: {e}")
+        return False
 
 # Legacy function for backward compatibility
 def track_interaction_legacy(user_id, playlist_id, interaction_type, context_data):
