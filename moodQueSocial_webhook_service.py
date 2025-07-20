@@ -608,3 +608,60 @@ def update_glide_profile():
     except Exception as e:
         logger.error(f"Error updating Glide profile: {e}")
         return jsonify({"status": "error"})
+    
+    # Add this endpoint to your moodQueSocial_webhook_service.py file
+# Place it with your other route definitions
+
+@app.route('/health_detailed', methods=['GET'])
+def health_detailed():
+    """Detailed health check for all system components"""
+    try:
+        health_status = {
+            "timestamp": datetime.now().isoformat(),
+            "overall_status": "healthy",
+            "components": {}
+        }
+        
+        # Check Firebase
+        try:
+            test_doc = db.collection("health_check").document("test")
+            test_doc.set({"timestamp": datetime.now().isoformat()})
+            health_status["components"]["firebase"] = "healthy"
+        except Exception as e:
+            health_status["components"]["firebase"] = f"unhealthy: {str(e)}"
+            health_status["overall_status"] = "degraded"
+        
+        # Check Spotify API
+        try:
+            from moodque_auth import get_spotify_access_token
+            token = get_spotify_access_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            res = requests.get("https://api.spotify.com/v1/me", headers=headers, timeout=5)
+            if res.status_code in [200, 401]:  # 401 is expected for app tokens
+                health_status["components"]["spotify_api"] = "healthy"
+            else:
+                health_status["components"]["spotify_api"] = f"unhealthy: HTTP {res.status_code}"
+                health_status["overall_status"] = "degraded"
+        except Exception as e:
+            health_status["components"]["spotify_api"] = f"unhealthy: {str(e)}"
+            health_status["overall_status"] = "degraded"
+        
+        # Check Last.fm API (if available)
+        try:
+            lastfm_key = os.environ.get("LASTFM_API_KEY")
+            if lastfm_key:
+                health_status["components"]["lastfm_api"] = "configured"
+            else:
+                health_status["components"]["lastfm_api"] = "not_configured"
+        except Exception as e:
+            health_status["components"]["lastfm_api"] = f"error: {str(e)}"
+        
+        status_code = 200 if health_status["overall_status"] == "healthy" else 503
+        return jsonify(health_status), status_code
+        
+    except Exception as e:
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "overall_status": "error",
+            "error": str(e)
+        }), 500
