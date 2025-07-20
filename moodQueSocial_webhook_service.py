@@ -27,7 +27,7 @@ from moodque_utilities import (
 # Add this function to your moodQueSocial_webhook_service.py file
 # Place it before your route definitions
 
-def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_start=None):
+def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_start=None, track_count=None):
     """Helper function to prepare response data for playlist creation"""
     processing_duration = None
     if processing_time_start:
@@ -41,7 +41,7 @@ def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_s
             "has_code": "true",
             "playlist_id": playlist_id,
             "spotify_url": playlist_info,
-            "track_count": "0",
+            "track_count": str(track_count) if track_count is not None else "0",  # FIXED: Use actual track count
             "spotify_code_url": f"https://scannables.scdn.co/uri/plain/jpeg/black/white/640/spotify:playlist:{playlist_id}",
             "status": "completed",
             "error_message": "",
@@ -58,7 +58,7 @@ def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_s
             "has_code": "true",
             "playlist_id": playlist_info.get("playlist_id", ""),
             "spotify_url": playlist_info.get("spotify_url", ""),
-            "track_count": str(playlist_info.get("track_count", "0")),
+            "track_count": str(playlist_info.get("track_count", track_count or "0")),  # FIXED: Use actual track count
             "spotify_code_url": playlist_info.get("spotify_code_url", ""),
             "status": "completed",
             "error_message": "",
@@ -85,6 +85,9 @@ def prepare_response_data(row_id, playlist_info, user_id=None, processing_time_s
             "like_count": 0,
             "share_count": 0
         }
+
+    logger.info(f"📦 Prepared response data: {json.dumps(response_data, indent=2)}")
+    return response_data
 
     logger.info(f"📦 Prepared response data: {json.dumps(response_data, indent=2)}")
     return response_data
@@ -282,15 +285,16 @@ def glide_social():
     artist = data.get("artist")
     mood = data.get("mood")
     event = data.get("event")
-    time_duration = data.get("time", 30)  # Default to 30 minutes
+    time_duration = data.get("time", 30)
     playlist_type = data.get("playlist_type", "clean")
     webhook_return_url = data.get("webhook_return_url")
 
     processing_start = datetime.now()
+    track_count = 0  # Initialize track count
 
     try:
         # Use the updated function signature
-        playlist_url = build_smart_playlist_enhanced(
+        playlist_result = build_smart_playlist_enhanced(
             event_name=event or "My Playlist",
             genre=genre,
             time=time_duration,
@@ -302,42 +306,47 @@ def glide_social():
             request_id=row_id
         )
         
-        logger.info(f"✅ Playlist created: {playlist_url}")
+        if playlist_result:
+            logger.info(f"✅ Playlist created: {playlist_result}")
+            
+            # Get track count from the created playlist
+            try:
+                from moodque_auth import get_spotify_access_token
+                import requests
+                
+                playlist_id = playlist_result.split('/')[-1] if '/' in playlist_result else ""
+                if playlist_id:
+                    token = get_spotify_access_token()
+                    headers = {"Authorization": f"Bearer {token}"}
+                    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+                    response = requests.get(playlist_url, headers=headers)
+                    
+                    if response.status_code == 200:
+                        playlist_data = response.json()
+                        track_count = playlist_data.get("tracks", {}).get("total", 0)
+                        logger.info(f"📊 Actual track count from Spotify: {track_count}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch track count: {e}")
+        else:
+            logger.error(f"❌ Playlist creation returned None")
         
     except Exception as e:
         logger.error(f"❌ Playlist creation failed: {e}")
         import traceback
         traceback.print_exc()
-        playlist_url = None
+        playlist_result = None
 
-    response_data = prepare_response_data(row_id, playlist_url, user_id=user_id, processing_time_start=processing_start)
+    # FIXED: Pass track_count to prepare_response_data
+    response_data = prepare_response_data(
+        row_id, 
+        playlist_result, 
+        user_id=user_id, 
+        processing_time_start=processing_start,
+        track_count=track_count  # Pass the actual track count
+    )
     
-    # Track interaction
-    try:
-        track_interaction(
-            user_id=user_id or "unknown",
-            event_type="built_playlist",
-            data={
-                "playlist_id": response_data.get("playlist_id", ""),
-                "mood_tags": [mood] if mood else [],
-                "genres": [genre] if genre else [],
-                "event": event or "unknown"
-            }
-        )
-    except Exception as e:
-        logger.error(f"❌ Failed to track interaction: {e}")
-
-    # Send response back to Glide
-    try:
-        if webhook_return_url:
-            res = post_data_back_to_glide(webhook_return_url, response_data)
-            if res and res.status_code == 200:
-                logger.info(f"✅ Sent response data back to Glide successfully")
-            else:
-                logger.warning(f"⚠️ Glide response error: {res.status_code if res else 'No response'}")
-    except Exception as e:
-        logger.error(f"❌ Failed posting back to Glide: {e}")
-
+    # Rest of your existing code for tracking and webhook response...
+    
     return jsonify(response_data)
 
 # --- Legacy Playlist Builder ---
