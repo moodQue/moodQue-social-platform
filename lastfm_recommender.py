@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Set
 from collections import Counter
 import requests
 import os
+import random
 
 # Get Last.fm API key
 LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY")
@@ -41,7 +42,39 @@ ARTIST_ERA_MAP = {
     "Queen": ["1970s", "1980s", "1990s"],
     "David Bowie": ["1970s", "1980s", "1990s"],
     "Madonna": ["1980s", "1990s", "2000s"],
-    "Janet Jackson": ["1980s", "1990s", "2000s"]
+    "Janet Jackson": ["1980s", "1990s", "2000s"],
+    "Arctic Monkeys": ["2000s", "2010s", "2020s"],
+    "Tame Impala": ["2010s", "2020s"],
+    "The 1975": ["2010s", "2020s"],
+    "Imagine Dragons": ["2010s", "2020s"],
+    "OneRepublic": ["2000s", "2010s", "2020s"],
+    "Maroon 5": ["2000s", "2010s", "2020s"],
+    "Dua Lipa": ["2010s", "2020s"],
+    "Olivia Rodrigo": ["2020s"],
+    "Harry Styles": ["2010s", "2020s"],
+    "Kendrick Lamar": ["2010s", "2020s"],
+    "Travis Scott": ["2010s", "2020s"]
+}
+
+# Genre-to-artist seed mapping for when no favorite artist is provided
+GENRE_ARTIST_SEEDS = {
+    "pop": ["Taylor Swift", "Dua Lipa", "Harry Styles", "Olivia Rodrigo"],
+    "hip-hop": ["Drake", "Kendrick Lamar", "Travis Scott", "Eminem"],
+    "indie": ["Arctic Monkeys", "Tame Impala", "The 1975"],
+    "rock": ["Imagine Dragons", "OneRepublic", "Maroon 5", "Queen"],
+    "r-n-b": ["Usher", "John Legend", "Maxwell", "Sade"],
+    "electronic": ["Marshmello", "Calvin Harris", "The Chainsmokers"],
+    "country": ["Taylor Swift", "Keith Urban", "Miranda Lambert"],
+    "jazz": ["Frank Sinatra", "Norah Jones", "Diana Krall"],
+    "classical": ["Ludovico Einaudi", "Max Richter", "Ólafur Arnalds"],
+    "funk": ["Prince", "Pharrell", "Bruno Mars"],
+    "soul": ["Stevie Wonder", "Adele", "John Legend"],
+    "reggae": ["Bob Marley", "Jimmy Buffett", "UB40"],
+    "latin": ["Bad Bunny", "J Balvin", "Shakira"],
+    "blues": ["B.B. King", "Eric Clapton", "Stevie Ray Vaughan"],
+    "alternative": ["Arctic Monkeys", "The 1975", "Tame Impala"],
+    "metal": ["Metallica", "Iron Maiden", "Black Sabbath"],
+    "grunge": ["Nirvana", "Pearl Jam", "Soundgarden"]
 }
 
 def find_era_overlap(seed_artists: List[str]) -> Dict[str, float]:
@@ -192,24 +225,62 @@ def get_lastfm_top_tracks(artist_name: str, limit: int = 5) -> List[tuple]:
         print(f"❌ Error fetching top tracks for {artist_name}: {e}")
         return []
 
-def get_recommendations(seed_artists: List[str], genre: str, birth_year: Optional[int] = None) -> List[Dict]:
+def get_genre_seed_artists(genre: str, limit: int = 3) -> List[str]:
+    """Get seed artists for a genre when no favorite artist is provided"""
+    genre_clean = genre.lower().strip()
+    
+    # Direct match
+    if genre_clean in GENRE_ARTIST_SEEDS:
+        artists = GENRE_ARTIST_SEEDS[genre_clean][:limit]
+        print(f"🎵 Found genre seed artists for '{genre}': {artists}")
+        return artists
+    
+    # Fuzzy matching
+    for genre_key, artists in GENRE_ARTIST_SEEDS.items():
+        if genre_clean in genre_key or genre_key in genre_clean:
+            selected = artists[:limit]
+            print(f"🎵 Fuzzy matched '{genre}' to '{genre_key}': {selected}")
+            return selected
+    
+    # Default fallback to pop
+    fallback = GENRE_ARTIST_SEEDS["pop"][:limit]
+    print(f"⚠️ No genre match for '{genre}', using pop artists: {fallback}")
+    return fallback
+
+def get_similar_artists(artist_name: str, limit: int = 10) -> List[str]:
+    """Wrapper function for get_lastfm_similar_artists to match expected interface"""
+    return get_lastfm_similar_artists(artist_name, limit)
+
+def get_recommendations(seed_artists: Optional[List[str]] = None, 
+                       genre: str = "pop", 
+                       birth_year: Optional[int] = None,
+                       era_weights: Optional[Dict[str, float]] = None,
+                       limit: int = 20,
+                       return_artists_only: bool = False) -> List[Dict]:
     """
     Enhanced recommendation system with Last.fm integration and era overlap logic
     """
+    # Handle string input for seed_artists
     if isinstance(seed_artists, str):
         seed_artists = [a.strip() for a in seed_artists.split(",") if a.strip()]
+    
+    # If no seed artists provided, get them from genre
+    if not seed_artists:
+        seed_artists = get_genre_seed_artists(genre, limit=2)
+        print(f"🎵 No seed artists provided, using genre-based seeds: {seed_artists}")
     
     print(f"🎵 Getting recommendations for artists: {seed_artists}")
     print(f"🎼 Genre: {genre}")
     print(f"🎂 Birth year: {birth_year}")
     
-    # Find era overlap between artists
-    era_weights = find_era_overlap(seed_artists)
-    
-    # If no artist-based eras and we have birth year, use age-based inference
-    if not era_weights and birth_year:
-        era_weights = infer_era_from_age(birth_year)
-        print(f"🎂 Using age-based era weights: {era_weights}")
+    # Use provided era weights or calculate them
+    if not era_weights:
+        era_weights = find_era_overlap(seed_artists)
+        
+        # If no artist-based eras and we have birth year, use age-based inference
+        if not era_weights and birth_year:
+            era_weights = infer_era_from_age(birth_year)
+            print(f"🎂 Using age-based era weights: {era_weights}")
     
     # Default fallback for current trends
     if not era_weights:
@@ -227,14 +298,40 @@ def get_recommendations(seed_artists: List[str], genre: str, birth_year: Optiona
         expanded_artists.update(similar)
         print(f"🔗 Similar to {artist}: {similar}")
     
+    # If return_artists_only is True, return artist list with scores
+    if return_artists_only:
+        artist_recommendations = []
+        for artist in expanded_artists:
+            artist_eras = ARTIST_ERA_MAP.get(artist, [f"{datetime.now().year//10*10}s"])
+            max_score = 0
+            best_era = None
+            
+            for era in artist_eras:
+                era_weight = era_weights.get(era, 0.1)
+                if era_weight > max_score:
+                    max_score = era_weight
+                    best_era = era
+            
+            artist_recommendations.append({
+                "artist": artist,
+                "era": best_era,
+                "score": max_score,
+                "is_seed": artist in seed_artists
+            })
+        
+        # Sort by score, prioritizing seed artists
+        artist_recommendations.sort(key=lambda x: (x["is_seed"], x["score"]), reverse=True)
+        return artist_recommendations[:limit]
+    
     # Get track recommendations
     recommendations = []
+    tracks_per_artist = max(1, limit // max(len(expanded_artists), 1))
     
-    # Get tracks from seed artists
+    # Get tracks from seed artists (higher priority)
     for artist in seed_artists:
-        tracks = get_lastfm_top_tracks(artist, limit=3)
+        tracks = get_lastfm_top_tracks(artist, limit=tracks_per_artist + 1)
         for track_name, artist_name in tracks:
-            artist_eras = ARTIST_ERA_MAP.get(artist_name, [datetime.now().year//10*10])
+            artist_eras = ARTIST_ERA_MAP.get(artist_name, [f"{datetime.now().year//10*10}s"])
             for era in artist_eras:
                 era_weight = era_weights.get(era, 0.1)
                 genre_match = 1.0 if genre.lower() in track_name.lower() else 0.8
@@ -253,9 +350,9 @@ def get_recommendations(seed_artists: List[str], genre: str, birth_year: Optiona
     
     # Get tracks from similar artists
     for artist in expanded_artists - set(seed_artists):
-        tracks = get_lastfm_top_tracks(artist, limit=2)
+        tracks = get_lastfm_top_tracks(artist, limit=max(1, tracks_per_artist // 2))
         for track_name, artist_name in tracks:
-            artist_eras = ARTIST_ERA_MAP.get(artist_name, [datetime.now().year//10*10])
+            artist_eras = ARTIST_ERA_MAP.get(artist_name, [f"{datetime.now().year//10*10}s"])
             for era in artist_eras:
                 era_weight = era_weights.get(era, 0.1)
                 genre_match = 1.0 if genre.lower() in track_name.lower() else 0.8
@@ -272,14 +369,23 @@ def get_recommendations(seed_artists: List[str], genre: str, birth_year: Optiona
                     "source": "similar_artist"
                 })
     
-    # Sort by score and return top recommendations
-    recommendations.sort(key=lambda x: x["score"], reverse=True)
+    # Remove duplicates and sort by score
+    seen_tracks = set()
+    unique_recommendations = []
+    
+    for rec in recommendations:
+        track_key = f"{rec['artist']}||{rec['track']}"
+        if track_key not in seen_tracks:
+            seen_tracks.add(track_key)
+            unique_recommendations.append(rec)
+    
+    unique_recommendations.sort(key=lambda x: x["score"], reverse=True)
     
     print(f"🎯 Top recommendations:")
-    for i, rec in enumerate(recommendations[:10]):
+    for i, rec in enumerate(unique_recommendations[:min(10, len(unique_recommendations))]):
         print(f"  {i+1}. {rec['artist']} - {rec['track']} (Era: {rec['era']}, Score: {rec['score']}, Source: {rec['source']})")
     
-    return recommendations[:10]
+    return unique_recommendations[:limit]
 
 def infer_era_from_age(birth_year: int) -> Dict[str, float]:
     """Infer preferred musical eras based on birth year"""
@@ -295,9 +401,46 @@ def infer_era_from_age(birth_year: int) -> Dict[str, float]:
         decade = f"{year//10*10}s"
         era_weights[decade] = era_weights.get(decade, 0) + 0.2
     
+    # Add some weight to current era for ongoing exposure
+    current_decade = f"{current_year//10*10}s"
+    era_weights[current_decade] = era_weights.get(current_decade, 0) + 0.3
+    
     # Normalize weights
     if era_weights:
         max_weight = max(era_weights.values())
         era_weights = {era: weight / max_weight for era, weight in era_weights.items()}
     
     return era_weights
+
+def get_lastfm_track_info(artist: str, track: str) -> Optional[Dict]:
+    """Get detailed track information from Last.fm"""
+    if not LASTFM_API_KEY:
+        return None
+    
+    url = "https://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "track.getInfo",
+        "artist": artist.strip(),
+        "track": track.strip(),
+        "api_key": LASTFM_API_KEY,
+        "format": "json"
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if "error" not in data and "track" in data:
+                track_data = data["track"]
+                return {
+                    "name": track_data.get("name"),
+                    "artist": track_data.get("artist", {}).get("name"),
+                    "playcount": int(track_data.get("playcount", 0)),
+                    "listeners": int(track_data.get("listeners", 0)),
+                    "tags": [tag.get("name") for tag in track_data.get("toptags", {}).get("tag", [])],
+                    "duration_ms": int(track_data.get("duration", 0))
+                }
+    except Exception as e:
+        print(f"❌ Error getting track info: {e}")
+    
+    return None

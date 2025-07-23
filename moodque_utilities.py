@@ -95,9 +95,10 @@ def create_new_playlist(headers, user_id, name, description=""):
         print(f"❌ Exception creating playlist: {e}")
         return None
 
-def add_tracks_to_playlist(headers, playlist_id, track_uris):
+def add_tracks_to_playlist(headers, user_id, playlist_id, track_uris):
     """
-    Add tracks to playlist with better error handling
+    Add tracks to playlist - CORRECTED SIGNATURE to match engine expectations
+    Note: user_id parameter is kept for compatibility but not used in API call
     """
     try:
         url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
@@ -179,69 +180,15 @@ def get_tracks_with_duration(track_uris, headers):
         print(f"❌ Error getting track durations: {e}")
         return []
 
-def search_spotify_tracks_enhanced_with_duration(genre, headers, target_duration_minutes=30, 
-                                                max_tracks=100, mood_tags=None, 
-                                                search_keywords=None, playlist_type="clean", 
-                                                favorite_artist=None):
-    """Enhanced search with duration-based selection"""
-    try:
-        print(f"🔍 Enhanced search - Genre: {genre}, Target: {target_duration_minutes}min")
-        
-        # Import here to avoid circular imports
-        from moodque_engine import search_spotify_tracks_enhanced
-        
-        track_uris = search_spotify_tracks_enhanced(
-            genre=genre,
-            headers=headers,
-            limit=max_tracks,
-            mood_tags=mood_tags,
-            search_keywords=search_keywords,
-            playlist_type=playlist_type,
-            favorite_artist=favorite_artist
-        )
-        
-        if not track_uris:
-            print("❌ No tracks found from enhanced search")
-            return []
-        
-        # Get track details with duration
-        track_data = get_tracks_with_duration(track_uris, headers)
-        
-        # Filter by explicit content
-        if playlist_type.lower() == "clean":
-            track_data = [t for t in track_data if not t.get("explicit", False)]
-        elif playlist_type.lower() == "explicit":
-            track_data = [t for t in track_data if t.get("explicit", False)]
-        
-        # Select tracks to match target duration
-        selected_tracks = []
-        current_duration = 0
-        target_duration_ms = target_duration_minutes * 60 * 1000
-        
-        for track in track_data:
-            if current_duration >= target_duration_ms:
-                break
-            selected_tracks.append(track)
-            current_duration += track['duration_ms']
-        
-        final_duration = current_duration / 60000
-        print(f"✅ Selected {len(selected_tracks)} tracks, {final_duration:.1f} minutes")
-        
-        return selected_tracks
-        
-    except Exception as e:
-        print(f"❌ Error in enhanced search with duration: {e}")
-        return []
-
 def search_spotify_track(artist, title, headers):
     """Search for a specific track by artist and title"""
     try:
         if not artist or not title or not headers:
             return None
         
-        query = f"track:{title} artist:{artist}"
+        query = f"track:\"{title}\" artist:\"{artist}\""
         url = "https://api.spotify.com/v1/search"
-        params = {"q": query, "type": "track", "limit": 1}
+        params = {"q": query, "type": "track", "limit": 1, "market": "US"}
         res = requests.get(url, headers=headers, params=params)
         
         if res.status_code == 200:
@@ -250,10 +197,23 @@ def search_spotify_track(artist, title, headers):
                 tracks_data = data.get("tracks", {})
                 if isinstance(tracks_data, dict):
                     tracks = tracks_data.get("items", [])
-                    return tracks[0]["uri"] if tracks else None
+                    if tracks:
+                        return tracks[0]["uri"]
+        
+        # Fallback: try without quotes
+        query_fallback = f"track:{title} artist:{artist}"
+        params["q"] = query_fallback
+        res = requests.get(url, headers=headers, params=params)
+        
+        if res.status_code == 200:
+            data = res.json()
+            tracks = data.get("tracks", {}).get("items", [])
+            if tracks:
+                return tracks[0]["uri"]
+        
         return None
     except Exception as e:
-        print(f"❌ Error searching track: {e}")
+        print(f"❌ Error searching track '{artist} - {title}': {e}")
         return None
 
 def get_valid_access_token(user_id=None):
@@ -322,3 +282,106 @@ def post_data_back_to_glide(webhook_url, data):
     except Exception as e:
         print(f"❌ Error posting to Glide: {e}")
         return None
+
+# Additional utility functions needed by the new engine
+
+def search_spotify_tracks_enhanced_with_duration(genre, headers, target_duration_minutes=30, 
+                                                max_tracks=100, mood_tags=None, 
+                                                search_keywords=None, playlist_type="clean", 
+                                                favorite_artist=None):
+    """
+    Enhanced search with duration-based selection
+    REMOVED CIRCULAR IMPORT - This function is now just a placeholder
+    The new engine handles this logic internally
+    """
+    print(f"⚠️ search_spotify_tracks_enhanced_with_duration called - this should be handled by the new engine")
+    return []
+
+def search_artist_popular_tracks(artist_name, headers, limit=10):
+    """Search for an artist's popular tracks directly on Spotify"""
+    try:
+        print(f"🎤 Searching for popular tracks by: {artist_name}")
+        
+        # First find the artist
+        search_url = "https://api.spotify.com/v1/search"
+        params = {
+            "q": f"artist:\"{artist_name}\"",
+            "type": "artist",
+            "limit": 1
+        }
+        
+        res = requests.get(search_url, headers=headers, params=params)
+        if res.status_code != 200:
+            print(f"❌ Artist search failed: {res.status_code}")
+            return []
+        
+        data = res.json()
+        artists = data.get("artists", {}).get("items", [])
+        if not artists:
+            print(f"❌ Artist not found: {artist_name}")
+            return []
+        
+        artist_id = artists[0]["id"]
+        print(f"✅ Found artist {artist_name} with ID: {artist_id}")
+        
+        # Get artist's top tracks
+        top_tracks_url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
+        params = {"market": "US"}
+        
+        res = requests.get(top_tracks_url, headers=headers, params=params)
+        if res.status_code != 200:
+            print(f"❌ Top tracks request failed: {res.status_code}")
+            return []
+        
+        data = res.json()
+        tracks = data.get("tracks", [])
+        
+        track_uris = []
+        for track in tracks[:limit]:
+            if isinstance(track, dict) and "uri" in track:
+                track_uris.append(track["uri"])
+        
+        print(f"✅ Found {len(track_uris)} popular tracks for {artist_name}")
+        return track_uris
+        
+    except Exception as e:
+        print(f"❌ Error searching artist popular tracks: {e}")
+        return []
+
+def extract_tracks_from_search(search_response, playlist_type="clean"):
+    """Extract track URIs from Spotify search response"""
+    tracks = []
+    
+    try:
+        if not isinstance(search_response, dict):
+            return tracks
+        
+        tracks_data = search_response.get("tracks", {})
+        if not isinstance(tracks_data, dict):
+            return tracks
+        
+        items = tracks_data.get("items", [])
+        if not isinstance(items, list):
+            return tracks
+        
+        for track in items:
+            if not isinstance(track, dict):
+                continue
+            
+            # Check explicit content
+            is_explicit = track.get("explicit", False)
+            if playlist_type.lower() == "clean" and is_explicit:
+                continue
+            elif playlist_type.lower() == "explicit" and not is_explicit:
+                continue
+            
+            # Get track URI
+            track_uri = track.get("uri")
+            if track_uri and track_uri.startswith("spotify:track:"):
+                tracks.append(track_uri)
+        
+        return tracks
+        
+    except Exception as e:
+        print(f"❌ Error extracting tracks from search: {e}")
+        return tracks

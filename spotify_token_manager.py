@@ -1,28 +1,12 @@
 import os
 import json
 import datetime
-import firebase_admin
-from firebase_admin import credentials, firestore
-from google.auth.exceptions import DefaultCredentialsError
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
+import time
+import base64
+import requests
 
-# Load Firebase credentials from escaped JSON string in Railway
-def init_firestore():
-    firebase_admin_json = os.getenv("FIREBASE_ADMIN_JSON")
-    if not firebase_admin_json:
-        raise RuntimeError("FIREBASE_ADMIN_JSON not found in environment variables")
-
-    firebase_creds_dict = json.loads(firebase_admin_json)
-    cred = credentials.Certificate(firebase_creds_dict)
-
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred)
-
-    return firestore.client()
-
-# Firestore client
-db = init_firestore()
+# Use your existing Firebase initialization instead of creating a new one
+from firebase_admin_init import db
 
 # Spotify credential environment variables
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
@@ -30,10 +14,8 @@ SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "https://example.com/callback")
 
-import base64
-import requests
-
 def get_spotify_access_token():
+    """Get system/app access token for MoodQue"""
     auth_header = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
     headers = {
         "Authorization": f"Basic {auth_header}",
@@ -53,6 +35,7 @@ def get_spotify_access_token():
     return token_info["access_token"]
 
 def refresh_token_with_spotify(refresh_token):
+    """Refresh a user's token with Spotify API"""
     auth_header = base64.b64encode(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()).decode()
     headers = {
         "Authorization": f"Basic {auth_header}",
@@ -75,29 +58,138 @@ def refresh_token_with_spotify(refresh_token):
     }
 
 def refresh_access_token(user_id=None):
-    if user_id:
+    """
+    Main function to get access token - for user if user_id provided, else system token
+    UPDATED to handle both field name formats for compatibility
+    """
+    if user_id and user_id != 'unknown':
         try:
+            print(f"🔄 Refreshing token for user: {user_id}")
+            
             doc_ref = db.collection("users").document(user_id)
             doc = doc_ref.get()
+            
             if doc.exists:
                 user_data = doc.to_dict()
-                access_token = user_data.get("spotify_access_token")
+                current_access_token = user_data.get("spotify_access_token")
                 refresh_token = user_data.get("spotify_refresh_token")
-                token_expiry = user_data.get("spotify_token_expiry")
+                
+                # Handle both field name formats for expires time
+                token_expiry = (user_data.get("spotify_token_expires_at") or 
+                               user_data.get("spotify_token_expiry"))
 
-                if access_token and token_expiry:
-                    expiry_time = datetime.datetime.fromisoformat(token_expiry)
-                    if expiry_time > datetime.datetime.utcnow():
-                        return access_token
+                # Check if current token is still valid
+                if current_access_token and token_expiry:
+                    try:
+                        # Handle different expiry formats
+                        if isinstance(token_expiry, str):
+                            try:
+                                # Try ISO format first
+                                expiry_time = datetime.datetime.fromisoformat(token_expiry.replace('Z', '+00:00'))
+                            except ValueError:
+                                # Try timestamp format
+                                expiry_time = datetime.datetime.fromtimestamp(float(token_expiry))
+                        else:
+                            expiry_time = datetime.datetime.fromtimestamp(float(token_expiry))
+                        
+                        # If token expires more than 5 minutes from now, use current token
+                        if expiry_time > datetime.datetime.utcnow() + datetime.timedelta(minutes=5):
+                            print(f"✅ Current token for user {user_id} is still valid")
+                            return current_access_token
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️ Error parsing expiry time: {e}")
 
-                new_token_data = refresh_token_with_spotify(refresh_token)
-                doc_ref.update({
-                    "spotify_access_token": new_token_data["access_token"],
-                    "spotify_token_expiry": new_token_data["expires_at"]
-                })
-                return new_token_data["access_token"]
+                # Refresh the token if we have a refresh token
+                if refresh_token:
+                    print(f"🔄 Refreshing expired token for user {user_id}")
+                    new_token_data = refresh_token_with_spotify(refresh_token)
+                    
+                    # Update with standardized field names
+                    update_data = {
+                        "spotify_access_token": new_token_data["access_token"],
+                        "spotify_token_expires_at": new_token_data["expires_at"],
+                        "last_token_refresh": datetime.datetime.now().isoformat()
+                    }
+                    
+                    # Also update the old field name for backward compatibility
+                    update_data["spotify_token_expiry"] = new_token_data["expires_at"]
+                    
+                    doc_ref.update(update_data)
+                    
+                    print(f"✅ Successfully refreshed token for user {user_id}")
+                    return new_token_data["access_token"]
+                else:
+                    print(f"❌ No refresh token found for user {user_id}")
 
         except Exception as e:
             print(f"⚠️ Error refreshing user token from Firestore: {e}")
 
+    # Fallback to system token
+    print("🔐 Using system token as fallback")
     return get_spotify_access_token()
+
+def get_user_access_token(user_id):
+    """
+    Get a valid access token for the user, refreshing if necessary
+    """
+    return refresh_access_token(user_id)
+
+def is_user_connected(user_id):
+    """
+    Check if user has valid Spotify connection
+    """
+    try:
+        if not user_id or user_id == 'unknown':
+            return False
+            
+        doc_ref = db.collection("users").document(user_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return False
+        
+        user_data = doc.to_dict()
+        return bool(user_data.get("spotify_refresh_token"))
+        
+    except Exception as e:
+        print(f"❌ Error checking user connection: {e}")
+        return False
+
+def revoke_user_tokens(user_id):
+    """
+    Revoke and clear user tokens from database
+    """
+    try:
+        db.collection("users").document(user_id).update({
+            "spotify_access_token": None,
+            "spotify_refresh_token": None,
+            "spotify_token_expires_at": None,
+            "spotify_token_expiry": None,  # Clear old field name too
+            "tokens_revoked_at": datetime.datetime.now().isoformat()
+        })
+        print(f"✅ Revoked tokens for user {user_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error revoking tokens for user {user_id}: {e}")
+        return False
+
+def get_user_spotify_info(user_id):
+    """
+    Get user's Spotify profile information
+    """
+    try:
+        doc_ref = db.collection("users").document(user_id)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            user_data = doc.to_dict()
+            return {
+                "spotify_user_id": user_data.get("spotify_user_id"),
+                "spotify_display_name": user_data.get("spotify_display_name"),
+                "connected_at": user_data.get("connected_at"),
+                "is_connected": bool(user_data.get("spotify_refresh_token"))
+            }
+        return None
+    except Exception as e:
+        print(f"❌ Error getting user Spotify info: {e}")
+        return None

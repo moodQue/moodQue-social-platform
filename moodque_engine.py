@@ -1,7 +1,7 @@
-# moodque_engine.py
+# complete_moodque_engine.py - Full Featured MoodQue Engine
 
 from dotenv import load_dotenv
-from lastfm_recommender import get_recommendations
+from lastfm_recommender import get_recommendations, get_similar_artists, get_genre_seed_artists
 import os
 import requests
 import base64
@@ -9,7 +9,7 @@ import random
 import uuid
 import json
 import traceback
-from datetime import datetime  # Add this import at the top
+from datetime import datetime
 import logging
 
 # Import Firebase initialization
@@ -26,7 +26,6 @@ from moodque_utilities import (
     create_new_playlist,
     add_tracks_to_playlist,
     calculate_playlist_duration,
-    search_spotify_tracks_enhanced_with_duration,
     search_spotify_track
 )
 
@@ -62,63 +61,6 @@ SPOTIFY_VALID_GENRES = [
     "turkish", "work-out", "world-music"
 ]
 
-def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
-    """Get recommendations using moodQue recommender and build track list"""
-    # Handle genre
-    if not seed_genres:
-        print("⚠️ No genre provided. Defaulting to 'pop'.")
-    genre = seed_genres[0] if seed_genres else "pop"
-
-    # Handle birth year
-    birth_year = None
-    if mood_params:
-        birth_year = mood_params.get("birth_year")
-    if not birth_year:
-        print("⚠️ No birth year provided. Era scoring may be less accurate.")
-
-    # Get recommendations
-    tracklist = get_recommendations(seed_artists, genre, birth_year)
-
-    # Optional: Log selected tracks
-    for t in tracklist:
-        print(f"🎧 Selected: {t['artist']} - {t['track']} (score: {t['score']})")
-
-    return tracklist  # You’ll pass this to the playlist builder
-
-def build_spotify_playlist_from_tracks(headers, user_id,playlist_name, tracklist):
-    # Create a playlist
-    create_url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
-    payload = json.dumps({"name": playlist_name, "description": "Made with moodQue", "public": False})
-    try:
-        res = requests.post(create_url, headers=headers, data=payload)
-        if res.status_code == 201:
-            playlist_id = res.json().get("id")
-            print(f"✅ Created playlist: {playlist_name}")
-            
-            # Get track URIs from search
-            uris = []
-            for track in tracklist:
-                uri = search_spotify_track(track["artist"], track["track"], headers)
-                if uri:
-                    uris.append(uri)
-
-            # Add tracks to playlist
-            if uris:
-                add_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-                add_res = requests.post(add_url, headers=headers, json={"uris": uris})
-                if add_res.status_code == 201:
-                    print(f"🎶 Added {len(uris)} tracks to playlist!")
-                    return playlist_id
-                else:
-                    print(f"⚠️ Failed to add tracks: {add_res.status_code} {add_res.text}")
-            else:
-                print("⚠️ No tracks found to add.")
-        else:
-            print(f"❌ Playlist creation failed: {res.status_code} {res.text}")
-    except Exception as e:
-        print(f"❌ Exception during playlist build: {e}")
-    return None
-
 # Map your app genres to Spotify genres
 GENRE_MAPPING = {
     "hip-hop": "hip-hop",
@@ -142,1054 +84,684 @@ GENRE_MAPPING = {
     "electronic": "electronic"
 }
 
-def refresh_access_token():
-    url = "https://accounts.spotify.com/api/token"
-    client_creds = f"{client_id}:{client_secret}"
-    client_creds_b64 = base64.b64encode(client_creds.encode()).decode()
-
-    headers = {
-        "Authorization": f"Basic {client_creds_b64}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    payload = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token
-    }
-    res = requests.post(url, headers=headers, data=payload)
-    if res.status_code != 200:
-        print("❌ Error refreshing token:", res.json())
-        exit()
-    print("✅ Access token refreshed successfully!")
-    return res.json()["access_token"]
-
-def get_spotify_user_id(headers):
-    try:
-        res = requests.get("https://api.spotify.com/v1/me", headers=headers)
-        if res.status_code == 200:
-            data = res.json()
-            return data.get("id")
-        else:
-            print(f"❌ Failed to get user ID: {res.status_code}")
-            return None
-    except Exception as e:
-        print(f"❌ Error getting user ID: {e}")
-        return None
-
-
-def add_tracks_to_playlist(headers, user_id, playlist_id, track_uris):
-    """Add tracks to playlist with better error handling"""
-    try:
-        url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+class MoodQueEngine:
+    def __init__(self, request_data):
+        """Initialize with clean request data"""
+        self.request_data = request_data
+        self.user_id = request_data.get('user_id', 'unknown')
+        self.request_id = request_data.get('request_id', str(uuid.uuid4())[:8])
+        self.logger_prefix = f"[{self.request_id}]"
         
-        # Ensure track_uris is a list of strings
-        clean_uris = []
-        if isinstance(track_uris, list):
-            for t in track_uris:
-                if isinstance(t, dict) and "uri" in t:
-                    clean_uris.append(t["uri"])
-                elif isinstance(t, str) and "spotify:track:" in t:
-                    clean_uris.append(t)
+        # Extract and validate parameters
+        self.event_name = request_data.get('event_name') or "Untitled MoodQue Mix"
+        self.genre = request_data.get('genre', 'pop')
+        self.time_minutes = int(request_data.get('time', 30))
+        self.mood_tags = request_data.get('mood_tags')
+        self.search_keywords = request_data.get('search_keywords')
+        self.favorite_artist = request_data.get('favorite_artist')
+        self.playlist_type = request_data.get('playlist_type', 'clean')
+        self.birth_year = request_data.get('birth_year')
         
-        if not clean_uris:
-            print("❌ No valid track URIs to add")
-            return False
+        # Initialize components
+        self.access_token = None
+        self.headers = None
+        self.spotify_user_id = None
+        
+        # Results storage
+        self.artist_pool = []
+        self.track_candidates = []
+        self.final_playlist = []
+        
+        # Audio feature parameters for mood matching
+        self.mood_audio_params = self._get_mood_audio_params()
+        
+        print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
+        print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
 
-        payload = {"uris": clean_uris}
-        res = requests.post(url, headers=headers, json=payload)
-
-        if res.status_code == 201:
-            print(f"✅ Successfully added {len(clean_uris)} tracks to playlist")
-            return True
-        else:
-            print(f"❌ Error adding tracks: {res.status_code} {res.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Exception adding tracks: {e}")
-        return False
-
-def get_enhanced_mood_values(mood):
-    """Enhanced mood mapping with more precise audio features"""
-    mood_map = {
-        "happy": {
-            "target_energy": 0.85, "target_valence": 0.9, "target_danceability": 0.8,
-            "min_energy": 0.6, "min_valence": 0.7, "target_tempo": 120
-        },
-        "chill": {
-            "target_energy": 0.3, "target_valence": 0.5, "target_danceability": 0.4,
-            "max_energy": 0.6, "target_acousticness": 0.6, "target_tempo": 90
-        },
-        "upbeat": {
-            "target_energy": 0.9, "target_valence": 0.8, "target_danceability": 0.9,
-            "min_energy": 0.7, "target_tempo": 130
-        },
-        "energetic": {
-            "target_energy": 0.9, "target_valence": 0.8, "target_danceability": 0.85,
-            "min_energy": 0.8, "target_tempo": 125
-        },
-        "focus": {
-            "target_energy": 0.4, "target_valence": 0.3, "target_danceability": 0.3,
-            "target_instrumentalness": 0.7, "max_speechiness": 0.1, "target_tempo": 100
-        },
-        "party": {
-            "target_energy": 0.95, "target_valence": 0.9, "target_danceability": 0.95,
-            "min_energy": 0.8, "min_danceability": 0.8, "target_tempo": 125
-        },
-        "hype": {
-            "target_energy": 0.95, "target_valence": 0.85, "target_danceability": 0.9,
-            "min_energy": 0.9, "target_loudness": -5, "target_tempo": 140
-        },
-        "melancholy": {
-            "target_energy": 0.25, "target_valence": 0.2, "target_danceability": 0.3,
-            "max_energy": 0.5, "max_valence": 0.4, "target_acousticness": 0.7
-        },
-        "workout": {
-            "target_energy": 0.9, "target_valence": 0.7, "target_danceability": 0.85,
-            "min_energy": 0.8, "target_tempo": 130, "target_loudness": -5
-        },
-        "romantic": {
-            "target_energy": 0.4, "target_valence": 0.6, "target_danceability": 0.5,
-            "target_acousticness": 0.5, "max_tempo": 100
+    def _format_parameters(self):
+        """Format parameters for logging"""
+        return {
+            'event': self.event_name,
+            'genre': self.genre,
+            'time': f"{self.time_minutes}min",
+            'mood': self.mood_tags,
+            'keywords': self.search_keywords,
+            'artist': self.favorite_artist,
+            'filter': self.playlist_type,
+            'birth_year': self.birth_year
         }
-    }
-    return mood_map.get(mood.lower(), {})
 
-def sanitize_genre(genre):
-    """Map app genres to valid Spotify genres"""
-    if not genre or genre.lower() == "any":
-        return None
+    def _get_mood_audio_params(self):
+        """Get audio feature parameters based on mood"""
+        if not self.mood_tags:
+            return {}
         
-    genre_clean = genre.strip().lower().replace(" ", "-")
-    
-    # Check if it's directly in our mapping
-    if genre_clean in GENRE_MAPPING:
-        spotify_genre = GENRE_MAPPING[genre_clean]
-        print(f"🎵 Genre mapped: '{genre}' → '{spotify_genre}'")
-        return spotify_genre
-    
-    # Check if it's already a valid Spotify genre
-    if genre_clean in SPOTIFY_VALID_GENRES:
-        print(f"🎵 Genre valid: '{genre_clean}'")
-        return genre_clean
-    
-    # Fallback: try to find a similar genre
-    for valid_genre in SPOTIFY_VALID_GENRES:
-        if genre_clean in valid_genre or valid_genre in genre_clean:
-            print(f"🎵 Genre fuzzy match: '{genre}' → '{valid_genre}'")
-            return valid_genre
-    
-    print(f"⚠️ Genre '{genre}' not found. Using 'pop' as fallback.")
-    return "pop"
-
-def parse_genre_list(genre_input):
-    """Parse comma-separated genres and map them to Spotify genres"""
-    try:
-        if not genre_input or genre_input.lower() == "any":
-            return ["pop"]
-        
-        # Split by commas and clean up
-        genres = [g.strip().lower() for g in str(genre_input).split(',') if g.strip()]
-        mapped_genres = []
-        
-        for genre in genres:
-            clean_genre = genre.replace(" ", "-")
-            
-            # Map to Spotify genre
-            if clean_genre in GENRE_MAPPING:
-                mapped_genres.append(GENRE_MAPPING[clean_genre])
-            elif clean_genre in SPOTIFY_VALID_GENRES:
-                mapped_genres.append(clean_genre)
-            else:
-                # Try to find similar genre
-                for valid_genre in SPOTIFY_VALID_GENRES:
-                    if clean_genre in valid_genre or valid_genre in clean_genre:
-                        mapped_genres.append(valid_genre)
-                        break
-        
-        # Remove duplicates and limit to 2 genres
-        unique_genres = list(set(mapped_genres))[:2]
-        
-        if not unique_genres:
-            unique_genres = ["pop"]
-        
-        print(f"🎵 Mapped genres: {genre_input} → {unique_genres}")
-        return unique_genres
-    except Exception as e:
-        print(f"❌ Error parsing genres: {e}")
-        return ["pop"]
-
-def get_artist_ids(artist_names, headers):
-    """Get Spotify artist IDs from artist names"""
-    artist_ids = []
-    
-    if not artist_names:
-        return artist_ids
-    
-    # Parse artist names if it's a string
-    if isinstance(artist_names, str):
-        names_list = [name.strip() for name in artist_names.split(",") if name.strip()]
-    else:
-        names_list = artist_names
-    
-    for name in names_list[:3]:  # Limit to 3 artists for better variety
-        if not name or not name.strip():
-            continue
-            
-        try:
-            res = requests.get("https://api.spotify.com/v1/search", params={
-                "q": name.strip(),
-                "type": "artist", 
-                "limit": 1
-            }, headers=headers)
-
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, dict):
-                    artists = data.get("artists", {})
-                    if isinstance(artists, dict):
-                        items = artists.get("items", [])
-                        if items and isinstance(items, list):
-                            artist_id = items[0]["id"]
-                            artist_ids.append(artist_id)
-                            print(f"🎤 Found artist: {name} → {artist_id}")
-                        else:
-                            print(f"❌ Artist not found: {name}")
-                    else:
-                        print(f"❌ Invalid artists response for: {name}")
-                else:
-                    print(f"❌ Invalid search response for: {name}")
-            else:
-                print(f"❌ Search failed for artist: {name}")
-        except Exception as e:
-            print(f"❌ Exception searching for artist {name}: {e}")
-    
-    return artist_ids
-
-# Replace the search_spotify_tracks_fallback function in your moodque_engine.py with this improved version:
-
-def search_spotify_tracks_fallback(genre, headers, limit=20, mood_tags=None, 
-                                 search_keywords=None, playlist_type="clean"):
-    """Improved fallback search using multiple search strategies"""
-    search_url = "https://api.spotify.com/v1/search"
-    all_tracks = []
-    current_year = datetime.now().year  # FIXED: Dynamic year instead of hardcoded 2024
-    
-    # Strategy 1: Search by genre
-    if genre and genre != "pop":
-        print(f"🔍 Fallback strategy 1: Searching by genre '{genre}'")
-        try:
-            params = {
-                "q": f"genre:{genre}",
-                "type": "track",
-                "limit": min(limit, 50),
-                "market": "US"
+        mood_map = {
+            "happy": {
+                "target_energy": 0.85, "target_valence": 0.9, "target_danceability": 0.8,
+                "min_energy": 0.6, "min_valence": 0.7, "target_tempo": 120
+            },
+            "chill": {
+                "target_energy": 0.3, "target_valence": 0.5, "target_danceability": 0.4,
+                "max_energy": 0.6, "target_acousticness": 0.6, "target_tempo": 90
+            },
+            "upbeat": {
+                "target_energy": 0.9, "target_valence": 0.8, "target_danceability": 0.9,
+                "min_energy": 0.7, "target_tempo": 130
+            },
+            "energetic": {
+                "target_energy": 0.9, "target_valence": 0.8, "target_danceability": 0.85,
+                "min_energy": 0.8, "target_tempo": 125
+            },
+            "focus": {
+                "target_energy": 0.4, "target_valence": 0.3, "target_danceability": 0.3,
+                "target_instrumentalness": 0.7, "max_speechiness": 0.1, "target_tempo": 100
+            },
+            "party": {
+                "target_energy": 0.95, "target_valence": 0.9, "target_danceability": 0.95,
+                "min_energy": 0.8, "min_danceability": 0.8, "target_tempo": 125
+            },
+            "hype": {
+                "target_energy": 0.95, "target_valence": 0.85, "target_danceability": 0.9,
+                "min_energy": 0.9, "target_loudness": -5, "target_tempo": 140
+            },
+            "melancholy": {
+                "target_energy": 0.25, "target_valence": 0.2, "target_danceability": 0.3,
+                "max_energy": 0.5, "max_valence": 0.4, "target_acousticness": 0.7
+            },
+            "workout": {
+                "target_energy": 0.9, "target_valence": 0.7, "target_danceability": 0.85,
+                "min_energy": 0.8, "target_tempo": 130, "target_loudness": -5
+            },
+            "romantic": {
+                "target_energy": 0.4, "target_valence": 0.6, "target_danceability": 0.5,
+                "target_acousticness": 0.5, "max_tempo": 100
             }
-            
-            res = requests.get(search_url, headers=headers, params=params)
-            if res.status_code == 200:
-                tracks = extract_tracks_from_search(res.json(), playlist_type)
-                all_tracks.extend(tracks)
-                print(f"✅ Genre search found {len(tracks)} tracks")
-        except Exception as e:
-            print(f"❌ Genre search failed: {e}")
-    
-    # Strategy 2: Search by mood/keywords
-    if (mood_tags or search_keywords) and len(all_tracks) < limit:
-        search_terms = []
-        if mood_tags:
-            search_terms.append(mood_tags.lower())
-        if search_keywords:
-            search_terms.append(search_keywords.lower())
+        }
+        return mood_map.get(self.mood_tags.lower(), {}) if self.mood_tags else {}
+
+    def authenticate_spotify(self):
+        """Handle Spotify authentication with proper fallback"""
+        print(f"{self.logger_prefix} 🔐 Authenticating with Spotify...")
         
-        query = " ".join(search_terms)
-        print(f"🔍 Fallback strategy 2: Searching by mood/keywords '{query}'")
+        # Try user token first
+        if self.user_id and self.user_id != 'unknown':
+            try:
+                from spotify_token_manager import refresh_access_token
+                self.access_token = refresh_access_token(self.user_id)
+                if self.access_token:
+                    print(f"{self.logger_prefix} ✅ User token authenticated for {self.user_id}")
+                    self.headers = {"Authorization": f"Bearer {self.access_token}"}
+                    self.spotify_user_id = get_spotify_user_id(self.headers)
+                    return True
+            except Exception as e:
+                print(f"{self.logger_prefix} ⚠️ User token failed: {e}")
         
+        # Fallback to system token
         try:
-            params = {
-                "q": query,
-                "type": "track",
-                "limit": min(limit, 50),
-                "market": "US"
-            }
-            
-            res = requests.get(search_url, headers=headers, params=params)
-            if res.status_code == 200:
-                tracks = extract_tracks_from_search(res.json(), playlist_type)
-                # Avoid duplicates
-                new_tracks = [t for t in tracks if t not in all_tracks]
-                all_tracks.extend(new_tracks)
-                print(f"✅ Mood/keyword search found {len(new_tracks)} new tracks")
+            from moodque_auth import get_spotify_access_token
+            self.access_token = get_spotify_access_token()
+            if self.access_token:
+                print(f"{self.logger_prefix} ✅ System token authenticated")
+                self.headers = {"Authorization": f"Bearer {self.access_token}"}
+                self.spotify_user_id = get_spotify_user_id(self.headers)
+                return True
         except Exception as e:
-            print(f"❌ Mood/keyword search failed: {e}")
-    
-    # Strategy 3: Popular tracks by current year (FIXED)
-    if len(all_tracks) < limit:
-        print(f"🔍 Fallback strategy 3: Searching for popular {current_year} tracks")
-        try:
-            params = {
-                "q": f"year:{current_year}",
-                "type": "track",
-                "limit": min(limit, 50),
-                "market": "US"
-            }
-            
-            res = requests.get(search_url, headers=headers, params=params)
-            if res.status_code == 200:
-                tracks = extract_tracks_from_search(res.json(), playlist_type)
-                new_tracks = [t for t in tracks if t not in all_tracks]
-                all_tracks.extend(new_tracks)
-                print(f"✅ {current_year} popular search found {len(new_tracks)} new tracks")
-        except Exception as e:
-            print(f"❌ {current_year} popular search failed: {e}")
-    
-    # Rest of your existing fallback strategies...
-    
-    result = all_tracks[:limit]
-    print(f"✅ Total fallback search result: {len(result)} tracks")
-    return result
-
-# FIXED: Correct add_tracks_to_playlist function signature in moodque_engine.py
-def add_tracks_to_playlist(headers, user_id, playlist_id, track_uris):
-    """Add tracks to playlist with better error handling"""
-    try:
-        url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+            print(f"{self.logger_prefix} ❌ System token failed: {e}")
         
-        # Ensure track_uris is a list of strings
-        clean_uris = []
-        if isinstance(track_uris, list):
-            for t in track_uris:
-                if isinstance(t, dict) and "uri" in t:
-                    clean_uris.append(t["uri"])
-                elif isinstance(t, str) and "spotify:track:" in t:
-                    clean_uris.append(t)
-        
-        if not clean_uris:
-            print("❌ No valid track URIs to add")
-            return False
-
-        payload = {"uris": clean_uris}
-        res = requests.post(url, headers=headers, json=payload)
-
-        if res.status_code == 201:
-            print(f"✅ Successfully added {len(clean_uris)} tracks to playlist")
-            return True
-        else:
-            print(f"❌ Error adding tracks: {res.status_code} {res.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Exception adding tracks: {e}")
         return False
 
-def extract_tracks_from_search(search_response, playlist_type="clean"):
-    """Extract track URIs from Spotify search response"""
-    tracks = []
-    
-    try:
-        if not isinstance(search_response, dict):
-            return tracks
+    def analyze_era_preferences(self):
+        """Analyze user preferences and determine era weights"""
+        print(f"{self.logger_prefix} 📊 Analyzing era preferences...")
         
-        tracks_data = search_response.get("tracks", {})
-        if not isinstance(tracks_data, dict):
-            return tracks
+        era_weights = {'2020s': 1.0, '2010s': 0.7, '2000s': 0.5, '1990s': 0.3, '1980s': 0.2}
         
-        items = tracks_data.get("items", [])
-        if not isinstance(items, list):
-            return tracks
+        # Adjust based on birth year
+        if self.birth_year:
+            try:
+                birth_year = int(self.birth_year)
+                current_year = datetime.now().year
+                age = current_year - birth_year
+                
+                # People tend to prefer music from their teens/early 20s
+                if age >= 15:  # Old enough to have musical preferences
+                    formative_decade = f"{((birth_year + 18) // 10) * 10}s"
+                    if formative_decade in era_weights:
+                        era_weights[formative_decade] = min(1.5, era_weights.get(formative_decade, 0.1) + 0.8)
+                        print(f"{self.logger_prefix} 🎯 Boosted {formative_decade} weight for age {age}")
+                
+            except (ValueError, TypeError):
+                print(f"{self.logger_prefix} ⚠️ Invalid birth year: {self.birth_year}")
         
-        for track in items:
-            if not isinstance(track, dict):
-                continue
-            
-            # Check explicit content
-            is_explicit = track.get("explicit", False)
-            if playlist_type.lower() == "clean" and is_explicit:
-                continue
-            elif playlist_type.lower() == "explicit" and not is_explicit:
-                continue
-            
-            # Get track URI
-            track_uri = track.get("uri")
-            if track_uri and track_uri.startswith("spotify:track:"):
-                tracks.append(track_uri)
+        # Adjust based on mood
+        if self.mood_tags:
+            mood_lower = self.mood_tags.lower()
+            if any(word in mood_lower for word in ['nostalgic', 'throwback', 'classic', 'retro']):
+                # Boost older eras
+                era_weights['2000s'] = min(1.2, era_weights['2000s'] + 0.4)
+                era_weights['1990s'] = min(1.0, era_weights['1990s'] + 0.4)
+                print(f"{self.logger_prefix} 🕰️ Boosted retro eras for nostalgic mood")
+            elif any(word in mood_lower for word in ['trending', 'current', 'new', 'fresh']):
+                # Boost current era
+                era_weights['2020s'] = 1.5
+                print(f"{self.logger_prefix} 🆕 Boosted current era for fresh mood")
         
-        return tracks
+        print(f"{self.logger_prefix} ⚖️ Era weights: {era_weights}")
+        return era_weights
+
+    def discover_artists_lastfm(self, era_weights):
+        """Use Last.fm to discover target artists and similar artists"""
+        print(f"{self.logger_prefix} 🎭 Discovering artists via Last.fm...")
         
-    except Exception as e:
-        print(f"❌ Error extracting tracks from search: {e}")
-        return tracks
-
-# Also add this function to handle the 404 recommendations error:
-def get_recommendations_enhanced(headers, limit=20, seed_genres=None, seed_artists=None, mood_params=None):
-    """Try to get Spotify recommendations, fallback to Last.fm if Spotify fails"""
-    rec_url = "https://api.spotify.com/v1/recommendations"
-
-    # Build Spotify parameters
-    params = {
-        "limit": min(limit, 20),
-        "market": "US"
-    }
-
-    total_seeds = 0
-    if seed_genres:
-        genres_to_use = seed_genres[:2]
-        params["seed_genres"] = ",".join(genres_to_use)
-        total_seeds += len(genres_to_use)
-        print(f"🎵 Using genre seeds: {genres_to_use}")
-
-    if seed_artists:
-        artists_to_use = seed_artists[:1]
-        params["seed_artists"] = ",".join(artists_to_use)
-        total_seeds += len(artists_to_use)
-        print(f"🎤 Using artist seeds: {artists_to_use}")
-
-    if mood_params:
-        if "target_energy" in mood_params:
-            params["target_energy"] = mood_params["target_energy"]
-        if "target_valence" in mood_params:
-            params["target_valence"] = mood_params["target_valence"]
-        print(f"😊 Using mood params: energy={params.get('target_energy')}, valence={params.get('target_valence')}")
-
-    print(f"🎯 API call with {total_seeds} seeds")
-    print(f"📝 Full params: {params}")
-
-    try:
-        res = requests.get(rec_url, headers=headers, params=params, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, dict):
-                tracks = data.get("tracks", [])
-                uris = [t["uri"] for t in tracks if "uri" in t]
-                print(f"✅ Spotify SUCCESS: Got {len(uris)} tracks")
-                return uris
+        target_artists = []
+        
+        # Add favorite artist if provided
+        if self.favorite_artist:
+            if isinstance(self.favorite_artist, str):
+                artists_list = [a.strip() for a in self.favorite_artist.split(',') if a.strip()]
             else:
-                print("❌ Invalid format from Spotify response.")
-        else:
-            print(f"❌ Spotify recommendations failed: {res.status_code} - {res.text}")
-    except Exception as e:
-        print(f"❌ Spotify exception: {e}")
-
-    # FALLBACK TO LAST.FM IF SPOTIFY FAILS
-    print("⚠️ Falling back to Last.fm recommendations...")
-    genre = seed_genres[0] if seed_genres else "pop"
-    birth_year = mood_params.get("birth_year") if mood_params else None
-    fallback_tracks = get_recommendations(seed_artists, genre, birth_year)
-    fallback_uris = []
-
-    for t in fallback_tracks:
-        uri = search_spotify_track(t["artist"], t["track"], headers)
-        if uri:
-            fallback_uris.append(uri)
-
-    print(f"✅ Last.fm fallback SUCCESS: Got {len(fallback_uris)} tracks")
-    return fallback_uris
-
-# Replace the search_spotify_tracks_enhanced function in moodque_engine.py with this version:
-
-def search_spotify_tracks_enhanced(genre, headers, limit=20, mood_tags=None, 
-                                 search_keywords=None, playlist_type="clean", 
-                                 favorite_artist=None, use_lastfm=False):
-    """Enhanced search with multiple fallback strategies"""
-    try:
-        print(f"🔍 Enhanced search - Genre: {genre}, Mood: {mood_tags}, Limit: {limit}")
+                artists_list = [self.favorite_artist] if self.favorite_artist else []
+            
+            target_artists.extend(artists_list[:3])  # Limit to 3 favorites
+            print(f"{self.logger_prefix} ⭐ Added favorite artists: {target_artists}")
         
-        # Parse genres
-        if isinstance(genre, str) and ',' in genre:
-            spotify_genres = parse_genre_list(genre)
-        else:
-            spotify_genre = sanitize_genre(genre) if genre else "pop"
-            spotify_genres = [spotify_genre] if spotify_genre else ["pop"]
+        # If no favorite artists, get genre-based seeds
+        if not target_artists:
+            target_artists = get_genre_seed_artists(self.genre, limit=2)
+            print(f"{self.logger_prefix} 🎵 Using genre seed artists: {target_artists}")
         
-        print(f"🎵 Using genres: {spotify_genres}")
-        
-        # Get artist IDs
-        artist_ids = []
-        if favorite_artist:
+        # Get similar artists for each target artist
+        similar_artists = []
+        for artist in target_artists:
             try:
-                artist_ids = get_artist_ids(favorite_artist, headers)
-                print(f"🎤 Found {len(artist_ids)} artist IDs")
+                similar = get_similar_artists(artist, limit=5)
+                similar_artists.extend(similar)
+                print(f"{self.logger_prefix} 🔗 Found {len(similar)} similar to {artist}")
             except Exception as e:
-                print(f"⚠️ Artist lookup failed: {e}")
+                print(f"{self.logger_prefix} ⚠️ Similar artist search failed for {artist}: {e}")
         
-        # Get mood parameters
-        mood_params = {}
-        if mood_tags:
-            try:
-                mood_params = get_enhanced_mood_values(mood_tags)
-                print(f"😊 Mood parameters: {mood_params}")
-            except Exception as e:
-                print(f"⚠️ Mood params failed: {e}")
-        
-        all_tracks = []
-        
-        # Strategy 1: Try recommendations API
-        print("🎯 Strategy 1: Trying Spotify Recommendations API...")
+        # Get genre-based artist recommendations
         try:
-            rec_tracks = get_recommendations_enhanced(
-                headers=headers,
-                limit=limit * 2,  # Get more recommendations to have options
-                seed_genres=spotify_genres,
-                seed_artists=artist_ids,
-                mood_params=mood_params
+            genre_artists = get_recommendations(
+                seed_artists=target_artists,
+                genre=self.genre,
+                birth_year=self.birth_year,
+                era_weights=era_weights,
+                limit=20,
+                return_artists_only=True
+            )
+            print(f"{self.logger_prefix} 🎵 Found {len(genre_artists)} genre-based artists")
+            similar_artists.extend([a['artist'] for a in genre_artists])
+        except Exception as e:
+            print(f"{self.logger_prefix} ⚠️ Genre artist discovery failed: {e}")
+        
+        # Combine and deduplicate
+        self.artist_pool = list(set(target_artists + similar_artists))
+        print(f"{self.logger_prefix} 👥 Artist pool: {len(self.artist_pool)} unique artists")
+        return self.artist_pool
+
+    def select_tracks_with_logic(self, era_weights):
+        """Use ML logic and user parameters to select optimal tracks"""
+        print(f"{self.logger_prefix} 🧠 Selecting tracks with intelligent logic...")
+        
+        # Get track recommendations from Last.fm
+        try:
+            lastfm_tracks = get_recommendations(
+                seed_artists=self.artist_pool[:5],  # Use top 5 artists
+                genre=self.genre,
+                birth_year=self.birth_year,
+                era_weights=era_weights,
+                limit=self.time_minutes * 3  # Get 3x target for filtering
+            )
+            print(f"{self.logger_prefix} 🎼 Last.fm returned {len(lastfm_tracks)} track recommendations")
+        except Exception as e:
+            print(f"{self.logger_prefix} ❌ Last.fm track selection failed: {e}")
+            lastfm_tracks = []
+        
+        # Apply user-specific filtering
+        filtered_candidates = self._apply_user_filters(lastfm_tracks)
+        
+        # Apply mood-based scoring
+        mood_scored_tracks = self._apply_mood_scoring(filtered_candidates)
+        
+        # Apply time-based selection
+        self.track_candidates = self._select_by_duration(mood_scored_tracks)
+        
+        print(f"{self.logger_prefix} ✅ Selected {len(self.track_candidates)} track candidates")
+        return self.track_candidates
+
+    def _apply_user_filters(self, tracks):
+        """Apply user-specific filters based on preferences"""
+        if not tracks:
+            return []
+        
+        filtered = []
+        
+        for track in tracks:
+            # Skip if no required data
+            if not track.get('artist') or not track.get('track'):
+                continue
+            
+            # Apply search keyword filtering
+            if self.search_keywords:
+                keywords_lower = self.search_keywords.lower()
+                track_text = f"{track.get('track', '')} {track.get('artist', '')}".lower()
+                if keywords_lower not in track_text:
+                    continue
+            
+            filtered.append(track)
+        
+        print(f"{self.logger_prefix} 🔍 User filters applied: {len(tracks)} → {len(filtered)}")
+        return filtered
+
+    def _apply_mood_scoring(self, tracks):
+        """Apply mood-based scoring to prioritize tracks"""
+        if not tracks or not self.mood_tags:
+            return tracks
+        
+        mood_keywords = {
+            'happy': ['happy', 'joy', 'celebration', 'upbeat', 'cheerful', 'bright'],
+            'energetic': ['energy', 'power', 'dynamic', 'intense', 'strong', 'vigorous'],
+            'chill': ['chill', 'relaxed', 'calm', 'peaceful', 'mellow', 'smooth'],
+            'party': ['party', 'dance', 'club', 'celebration', 'fun', 'wild'],
+            'romantic': ['love', 'romance', 'heart', 'romantic', 'intimate', 'tender'],
+            'workout': ['workout', 'fitness', 'training', 'exercise', 'pump', 'motivate'],
+            'focus': ['focus', 'concentrate', 'study', 'work', 'productivity', 'ambient'],
+            'melancholy': ['sad', 'melancholy', 'blue', 'emotional', 'reflective', 'somber']
+        }
+        
+        mood_lower = self.mood_tags.lower()
+        relevant_keywords = []
+        
+        for mood, keywords in mood_keywords.items():
+            if mood in mood_lower:
+                relevant_keywords.extend(keywords)
+        
+        # Score tracks based on mood keywords
+        for track in tracks:
+            score = track.get('score', 0.5)
+            track_name = track.get('track', '').lower()
+            
+            # Boost score if track name contains mood keywords
+            for keyword in relevant_keywords:
+                if keyword in track_name:
+                    score += 0.1
+                    break
+            
+            track['mood_score'] = score
+        
+        # Sort by mood score
+        scored_tracks = sorted(tracks, key=lambda x: x.get('mood_score', 0), reverse=True)
+        print(f"{self.logger_prefix} 😊 Applied mood scoring for '{self.mood_tags}'")
+        return scored_tracks
+
+    def _select_by_duration(self, tracks):
+        """Select tracks to match target duration"""
+        if not tracks:
+            return []
+        
+        target_duration_ms = self.time_minutes * 60 * 1000
+        avg_track_duration = 3.5 * 60 * 1000  # 3.5 minutes average
+        target_track_count = int(target_duration_ms / avg_track_duration)
+        
+        # Take top tracks up to target count with some buffer
+        selected = tracks[:int(target_track_count * 1.5)]
+        
+        print(f"{self.logger_prefix} ⏱️ Duration selection: targeting {target_track_count} tracks")
+        return selected
+
+    def find_spotify_tracks(self):
+        """Search for tracks on Spotify and validate availability"""
+        print(f"{self.logger_prefix} 🔍 Finding tracks on Spotify...")
+        
+        spotify_tracks = []
+        not_found_count = 0
+        
+        for track_data in self.track_candidates:
+            try:
+                artist = track_data.get('artist', '')
+                track_name = track_data.get('track', '')
+                
+                if not artist or not track_name:
+                    continue
+                
+                # Search for track on Spotify
+                spotify_uri = search_spotify_track(artist, track_name, self.headers)
+                
+                if spotify_uri:
+                    # Get full track details
+                    track_details = self._get_spotify_track_details(spotify_uri)
+                    if track_details:
+                        # Apply explicit content filter
+                        if self._passes_content_filter(track_details):
+                            # Apply quality filter
+                            if self._passes_quality_filter(track_details):
+                                track_data['spotify_uri'] = spotify_uri
+                                track_data['spotify_details'] = track_details
+                                spotify_tracks.append(track_data)
+                            else:
+                                print(f"{self.logger_prefix} 🚫 Quality filtered: {artist} - {track_name}")
+                        else:
+                            print(f"{self.logger_prefix} 🚫 Content filtered: {artist} - {track_name}")
+                    else:
+                        not_found_count += 1
+                else:
+                    not_found_count += 1
+                    
+            except Exception as e:
+                print(f"{self.logger_prefix} ⚠️ Error searching for track: {e}")
+                not_found_count += 1
+        
+        # If we have too few tracks, use fallback search
+        if len(spotify_tracks) < 5:
+            print(f"{self.logger_prefix} ⚠️ Too few tracks found ({len(spotify_tracks)}), using fallback search...")
+            fallback_tracks = self._fallback_spotify_search()
+            spotify_tracks.extend(fallback_tracks)
+        
+        print(f"{self.logger_prefix} ✅ Spotify search complete: {len(spotify_tracks)} found, {not_found_count} not found")
+        self.final_playlist = self._optimize_playlist_order(spotify_tracks)
+        return self.final_playlist
+
+    def _get_spotify_track_details(self, spotify_uri):
+        """Get detailed track information from Spotify"""
+        try:
+            track_id = spotify_uri.split(':')[-1]
+            response = requests.get(
+                f"https://api.spotify.com/v1/tracks/{track_id}",
+                headers=self.headers
             )
             
-            if rec_tracks:
-                all_tracks.extend(rec_tracks)
-                print(f"✅ Got {len(rec_tracks)} tracks from recommendations")
+            if response.status_code == 200:
+                return response.json()
             else:
-                print("⚠️ Recommendations returned no tracks")
+                return None
+                
         except Exception as e:
-            print(f"⚠️ Recommendations failed: {e}")
-        
-        # Strategy 2: Search for specific artists' popular tracks
-        if favorite_artist and len(all_tracks) < limit:
-            print(f"🎯 Strategy 2: Searching for popular tracks by {favorite_artist}")
-            try:
-                artist_tracks = search_artist_popular_tracks(favorite_artist, headers, limit // 2)
-                if artist_tracks:
-                    # Remove duplicates
-                    new_tracks = [t for t in artist_tracks if t not in all_tracks]
-                    all_tracks.extend(new_tracks)
-                    print(f"✅ Got {len(new_tracks)} tracks from artist search")
-            except Exception as e:
-                print(f"⚠️ Artist popular tracks search failed: {e}")
-        
-        # Strategy 3: Use improved fallback search
-        if len(all_tracks) < limit:
-            print("🎯 Strategy 3: Using improved fallback search...")
-            try:
-                needed_tracks = limit - len(all_tracks)
-                fallback_tracks = search_spotify_tracks_fallback(
-                    spotify_genres[0] if spotify_genres else "pop", 
-                    headers, 
-                    needed_tracks * 2,  # Get more than needed
-                    mood_tags, 
-                    search_keywords, 
-                    playlist_type
-                )
-                if fallback_tracks:
-                    # Remove duplicates
-                    new_tracks = [t for t in fallback_tracks if t not in all_tracks]
-                    all_tracks.extend(new_tracks)
-                    print(f"✅ Got {len(new_tracks)} tracks from fallback")
-                else:
-                    print("⚠️ Fallback search returned no tracks")
-            except Exception as e:
-                print(f"⚠️ Fallback search failed: {e}")
-        
-        # Strategy 4: Emergency fallback - just search for popular music
-        if len(all_tracks) < 5:  # If we have very few tracks
-            print("🚨 Strategy 4: Emergency fallback - searching for any popular music")
-            try:
-                emergency_tracks = emergency_track_search(headers, limit, playlist_type)
-                if emergency_tracks:
-                    new_tracks = [t for t in emergency_tracks if t not in all_tracks]
-                    all_tracks.extend(new_tracks)
-                    print(f"✅ Got {len(new_tracks)} tracks from emergency search")
-            except Exception as e:
-                print(f"⚠️ Emergency search failed: {e}")
-        
-        # Final result
-        result = all_tracks[:limit] if all_tracks else []
-        print(f"✅ Enhanced search complete: {len(result)} tracks total")
-        
-        if not result:
-            print("❌ No tracks found in any search strategy!")
-            
-        return result
-        
-    except Exception as e:
-        print(f"❌ Critical error in enhanced search: {e}")
-        # Last resort - try emergency search
-        try:
-            return emergency_track_search(headers, limit, playlist_type)
-        except Exception as e2:
-            print(f"❌ Emergency search also failed: {e2}")
-            return []
+            print(f"{self.logger_prefix} ❌ Error getting track details: {e}")
+            return None
 
-def search_artist_popular_tracks(artist_name, headers, limit=10):
-    """Search for an artist's popular tracks directly on Spotify"""
-    try:
-        print(f"🎤 Searching for popular tracks by: {artist_name}")
+    def _passes_content_filter(self, track_details):
+        """Check if track passes content filter"""
+        if not track_details:
+            return False
         
-        # First find the artist
-        search_url = "https://api.spotify.com/v1/search"
-        params = {
-            "q": f"artist:\"{artist_name}\"",  # Use quotes for exact match
-            "type": "artist",
-            "limit": 1
-        }
+        is_explicit = track_details.get('explicit', False)
         
-        res = requests.get(search_url, headers=headers, params=params)
-        if res.status_code != 200:
-            print(f"❌ Artist search failed: {res.status_code}")
-            return []
+        if self.playlist_type.lower() == 'clean' and is_explicit:
+            return False
+        elif self.playlist_type.lower() == 'explicit' and not is_explicit:
+            return False
         
-        data = res.json()
-        artists = data.get("artists", {}).get("items", [])
-        if not artists:
-            print(f"❌ Artist not found: {artist_name}")
-            return []
-        
-        artist_id = artists[0]["id"]
-        print(f"✅ Found artist {artist_name} with ID: {artist_id}")
-        
-        # Get artist's top tracks
-        top_tracks_url = f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks"
-        params = {"market": "US"}
-        
-        res = requests.get(top_tracks_url, headers=headers, params=params)
-        if res.status_code != 200:
-            print(f"❌ Top tracks request failed: {res.status_code}")
-            return []
-        
-        data = res.json()
-        tracks = data.get("tracks", [])
-        
-        track_uris = []
-        for track in tracks[:limit]:
-            if isinstance(track, dict) and "uri" in track:
-                track_uris.append(track["uri"])
-        
-        print(f"✅ Found {len(track_uris)} popular tracks for {artist_name}")
-        return track_uris
-        
-    except Exception as e:
-        print(f"❌ Error searching artist popular tracks: {e}")
-        return []
+        return True
 
-def emergency_track_search(headers, limit, playlist_type="clean"):
-    """Emergency search for when all else fails"""
-    try:
-        print("🚨 Running emergency track search...")
+    def _passes_quality_filter(self, track_details):
+        """Filter out low-quality tracks"""
+        if not track_details:
+            return False
         
-        search_url = "https://api.spotify.com/v1/search"
+        # Check duration (1-7 minutes)
+        duration_ms = track_details.get('duration_ms', 0)
+        if duration_ms < 60000 or duration_ms > 420000:
+            return False
         
-        # Try multiple simple search terms
-        search_terms = [
-            "top hits",
-            "popular songs", 
-            "chart toppers",
-            "best songs",
-            "trending music",
-            "hit songs",
-            "popular music",
-            "top 40"
+        # Check for low-quality indicators in name
+        track_name = track_details.get('name', '').lower()
+        quality_blacklist = [
+            'instrumental', 'karaoke', 'meditation', 'sleep music',
+            'background music', 'royalty free', 'no copyright',
+            'clean version', 'radio edit'
         ]
         
-        all_tracks = []
+        if any(term in track_name for term in quality_blacklist):
+            return False
         
-        for term in search_terms:
-            if len(all_tracks) >= limit:
-                break
-                
-            try:
-                params = {
-                    "q": term,
-                    "type": "track",
-                    "limit": 20,
-                    "market": "US"
-                }
-                
-                res = requests.get(search_url, headers=headers, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    tracks = extract_tracks_from_search(data, playlist_type)
-                    
-                    # Add unique tracks
-                    for track in tracks:
-                        if track not in all_tracks and len(all_tracks) < limit:
-                            all_tracks.append(track)
-                    
-                    print(f"✅ Emergency term '{term}' found {len(tracks)} tracks")
-            except Exception as e:
-                print(f"❌ Emergency term '{term}' failed: {e}")
+        return True
+
+    def _fallback_spotify_search(self):
+        """Fallback search when not enough tracks are found"""
+        print(f"{self.logger_prefix} 🚨 Running fallback Spotify search...")
         
-        print(f"🚨 Emergency search result: {len(all_tracks)} tracks")
-        return all_tracks
-        
-    except Exception as e:
-        print(f"❌ Emergency search completely failed: {e}")
-        return []
-
-# build_smart_playlist_enhanced function
-
-def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
-                                  favorite_artist, user_id=None, playlist_type="clean",
-                                  request_id=None):
-    if not event_name:
-        event_name = "Untitled MoodQue Mix"
-    logger_prefix = f"[{request_id}]" if request_id else ""
-    print(f"{logger_prefix} 🎯 Building playlist for event: '{event_name}'")
-    print(f"{logger_prefix} 🔥 Genre Input: {genre}")
-    print(f"{logger_prefix} 🎭 Mood Tag: {mood_tags}")
-    print(f"{logger_prefix} 🧠 Search Keywords: {search_keywords}")
-    print(f"{logger_prefix} 🌟 Favorite Artist(s): {favorite_artist}")
-    print(f"{logger_prefix} ⏰ Target Duration: {time} minutes")
-    print(f"{logger_prefix} 🚫 Content Filter: {playlist_type}")
-
-    access_token = None
-    if user_id:
-        try:
-            # Import here to avoid circular imports
-            from spotify_token_manager import refresh_access_token
-            access_token = refresh_access_token(user_id)
-            print(f"{logger_prefix} 🔓 Using user token for user_id={user_id}")
-        except Exception as e:
-            print(f"{logger_prefix} ⚠️ Could not refresh token for user {user_id}: {e}")
-
-    if not access_token:
-        from moodque_auth import get_spotify_access_token
-        access_token = get_spotify_access_token()
-        print(f"{logger_prefix} 🔐 Fallback to MoodQue system token")
-
-    headers = {"Authorization": f"Bearer {access_token}"}
-
-    try:
-        target_duration_minutes = int(time) if time else 30
-        estimated_track_count = max(10, int(target_duration_minutes / 3.5))
-        max_tracks = min(estimated_track_count * 2, 100)
-
-        track_items = search_spotify_tracks_enhanced_with_duration(
-            genre=genre,
-            headers=headers,
-            target_duration_minutes=target_duration_minutes,
-            max_tracks=max_tracks,
-            mood_tags=mood_tags,
-            search_keywords=search_keywords,
-            playlist_type=playlist_type,
-            favorite_artist=favorite_artist
-        )
-
-        if not track_items:
-            print(f"{logger_prefix} ❌ No valid tracks found, cannot create playlist")
-            return None
-
-        spotify_user_id = get_spotify_user_id(headers)
-        if not spotify_user_id:
-            print(f"{logger_prefix} ❌ Could not get Spotify user ID")
-            return None
-
-        playlist_id = create_new_playlist(headers, spotify_user_id, event_name,
-                                          f"MoodQue playlist for {event_name}")
-        if not playlist_id:
-            print(f"{logger_prefix} ❌ Could not create playlist")
-            return None
-
-        # FIXED: Extract URIs properly and call with correct parameters
-        track_uris = []
-        for track in track_items:
-            if isinstance(track, dict):
-                if 'uri' in track:
-                    track_uris.append(track['uri'])
-                elif 'track' in track and 'uri' in track['track']:
-                    track_uris.append(track['track']['uri'])
-            elif isinstance(track, str) and track.startswith('spotify:track:'):
-                track_uris.append(track)
-        
-        if not track_uris:
-            print(f"{logger_prefix} ❌ No valid track URIs extracted")
-            return None
-        
-        print(f"{logger_prefix} 🎵 Extracted {len(track_uris)} track URIs")
-        
-        # FIXED: Call with correct parameter order: headers, user_id, playlist_id, track_uris
-        success = add_tracks_to_playlist(headers, spotify_user_id, playlist_id, track_uris)
-        if not success:
-            print(f"{logger_prefix} ❌ Could not add tracks to playlist")
-            return None
-
-        final_duration = calculate_playlist_duration(track_items, headers)
-        print(f"{logger_prefix} ✅ Final playlist: {len(track_items)} tracks, {final_duration:.1f} minutes")
-
-        playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
-        print(f"{logger_prefix} ✅ Playlist created successfully: {playlist_url}")
-
-        # FIXED: Track interaction with proper data structure
-        try:
-            track_interaction(
-                user_id=user_id or "unknown",
-                event_type="built_playlist",
-                data={
-                    "playlist_id": playlist_id,
-                    "mood_tags": [mood_tags] if mood_tags else [],
-                    "genres": [genre] if genre else [],
-                    "event": event_name,
-                    "track_count": len(track_items),
-                    "duration_minutes": final_duration
-                }
-            )
-        except Exception as e:
-            print(f"{logger_prefix} ⚠️ Failed to track interaction: {e}")
-
-        return playlist_url
-
-    except Exception as e:
-        print(f"{logger_prefix} ❌ Error building playlist: {e}")
-        traceback.print_exc()
-        return None
-
-def filter_explicit_tracks(tracks, playlist_type):
-    """
-    Filter tracks based on explicit flag and playlist_type.
-    tracks: list of dicts with at least 'explicit' key.
-    playlist_type: "clean" or "explicit"
-    Returns a filtered list of tracks.
-    """
-    if not isinstance(tracks, list):
-        return []
-    if playlist_type.lower() == "clean":
-        return [track for track in tracks if not track.get("explicit", False)]
-    elif playlist_type.lower() == "explicit":
-        return [track for track in tracks if track.get("explicit", False)]
-    else:
-        return tracks
-
-def get_tracks_with_duration(track_uris, headers):
-    """Get track duration information for a list of URIs including explicit info"""
-    try:
-        track_data = []
-        
-        # Process in batches of 50 (Spotify API limit)
-        batch_size = 50
-        for i in range(0, len(track_uris), batch_size):
-            batch_uris = track_uris[i:i + batch_size]
-            track_ids = [uri.split(":")[-1] for uri in batch_uris if isinstance(uri, str)]
-            
-            if not track_ids:
-                continue
-            
-            res = requests.get("https://api.spotify.com/v1/tracks", 
-                              headers=headers, 
-                              params={"ids": ",".join(track_ids)})
-            
-            if res.status_code == 200:
-                data = res.json()
-                tracks = data.get("tracks", [])
-                
-                for j, track in enumerate(tracks):
-                    if track and isinstance(track, dict):
-                        track_info = {
-                            'uri': batch_uris[j] if j < len(batch_uris) else track.get("uri"),
-                            'duration_ms': track.get("duration_ms", 210000),
-                            'name': track.get("name", "Unknown"),
-                            'artist': track.get("artists", [{}])[0].get("name", "Unknown"),
-                            'explicit': track.get("explicit", False)  # Include explicit flag
-                        }
-                        track_data.append(track_info)
-        
-        return track_data
-        
-    except Exception as e:
-        print(f"❌ Error getting track durations: {e}")
-        return []
-
-def search_high_quality_tracks(genre, headers, limit=20, mood_tags=None, 
-                              search_keywords=None, playlist_type="clean"):
-    """Search for high-quality tracks with better filtering"""
-    try:
+        fallback_tracks = []
         search_url = "https://api.spotify.com/v1/search"
         
-        # Build high-quality search queries
-        queries = []
+        # Multiple search strategies
+        search_queries = []
         
-        # Query 1: Year-based search for recent hits
-        queries.append(f"year:2023-2024 genre:{genre}")
-        queries.append(f"year:2022-2023 genre:{genre}")
+        # Strategy 1: Genre-based search
+        spotify_genre = self._sanitize_genre(self.genre)
+        if spotify_genre:
+            search_queries.append(f"genre:{spotify_genre}")
         
-        # Query 2: Mood-based search
-        if mood_tags:
-            queries.append(f"{mood_tags} {genre}")
+        # Strategy 2: Mood-based search
+        if self.mood_tags:
+            search_queries.append(self.mood_tags)
         
-        # Query 3: Keyword search
-        if search_keywords:
-            queries.append(f"{search_keywords} {genre}")
+        # Strategy 3: Year-based search
+        current_year = datetime.now().year
+        search_queries.append(f"year:{current_year}")
+        search_queries.append(f"year:{current_year-1}")
         
-        # Query 4: Popular artists in genre
-        genre_artists = {
-            "pop": ["Dua Lipa", "Olivia Rodrigo", "Harry Styles"],
-            "hip-hop": ["Drake", "Kendrick Lamar", "Travis Scott"],
-            "indie": ["Arctic Monkeys", "Tame Impala", "The 1975"],
-            "rock": ["Imagine Dragons", "OneRepublic", "Maroon 5"]
-        }
-        
-        if genre in genre_artists:
-            for artist in genre_artists[genre]:
-                queries.append(f"artist:\"{artist}\"")
-        
-        all_tracks = []
-        tracks_per_query = max(2, limit // len(queries))
-        
-        for query in queries:
-            if len(all_tracks) >= limit:
+        for query in search_queries:
+            if len(fallback_tracks) >= 10:
                 break
                 
             try:
                 params = {
                     "q": query,
                     "type": "track",
-                    "limit": min(tracks_per_query * 2, 20),
+                    "limit": 10,
                     "market": "US"
                 }
                 
-                res = requests.get(search_url, headers=headers, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    tracks = extract_tracks_from_search(data, playlist_type)
+                response = requests.get(search_url, headers=self.headers, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    tracks = data.get('tracks', {}).get('items', [])
                     
-                    # Filter out low-quality tracks
-                    quality_tracks = filter_track_quality(tracks, headers)
-                    
-                    # Add unique tracks
-                    for track in quality_tracks[:tracks_per_query]:
-                        if track not in all_tracks and len(all_tracks) < limit:
-                            all_tracks.append(track)
-                    
-                    print(f"✅ Query '{query[:30]}...' found {len(quality_tracks)} quality tracks")
-                    
+                    for track in tracks:
+                        if len(fallback_tracks) >= 10:
+                            break
+                        
+                        if self._passes_content_filter(track) and self._passes_quality_filter(track):
+                            fallback_track = {
+                                'artist': track['artists'][0]['name'],
+                                'track': track['name'],
+                                'spotify_uri': track['uri'],
+                                'spotify_details': track,
+                                'score': 0.5,
+                                'source': 'fallback'
+                            }
+                            fallback_tracks.append(fallback_track)
+                            
             except Exception as e:
-                print(f"❌ Query failed: {e}")
-                continue
+                print(f"{self.logger_prefix} ❌ Fallback search query failed: {e}")
         
-        print(f"✅ High-quality search result: {len(all_tracks)} tracks")
-        return all_tracks
-        
-    except Exception as e:
-        print(f"❌ High-quality search failed: {e}")
-        return []
+        print(f"{self.logger_prefix} ✅ Fallback search found {len(fallback_tracks)} tracks")
+        return fallback_tracks
 
-def filter_track_quality(track_uris, headers):
-    """Filter out low-quality tracks (instrumentals, very short/long tracks, etc.)"""
-    try:
-        if not track_uris:
-            return []
-        
-        quality_tracks = []
-        
-        # Get track details
-        track_data = get_tracks_with_duration(track_uris, headers)
-        
-        for track in track_data:
-            # Filter criteria
-            duration_ms = track['duration_ms']
-            name = track['name'].lower()
-            artist = track['artist'].lower()
+    def _sanitize_genre(self, genre):
+        """Map app genres to valid Spotify genres"""
+        if not genre or genre.lower() == "any":
+            return None
             
-            # Skip very short or very long tracks
-            if duration_ms < 60000 or duration_ms > 420000:  # 1-7 minutes
-                continue
-            
-            # Skip obvious instrumental/generic tracks
-            skip_keywords = [
-                'instrumental', 'karaoke', 'meditation', 'sleep', 'study music',
-                'background music', 'royalty free', 'no copyright', 'clean pop music',
-                'instrumentals for', 'upbeat study'
-            ]
-            
-            if any(keyword in name for keyword in skip_keywords):
-                continue
-            
-            if any(keyword in artist for keyword in skip_keywords):
-                continue
-            
-            quality_tracks.append(track['uri'])
+        genre_clean = genre.strip().lower().replace(" ", "-")
         
-        return quality_tracks
+        # Check if it's directly in our mapping
+        if genre_clean in GENRE_MAPPING:
+            spotify_genre = GENRE_MAPPING[genre_clean]
+            return spotify_genre
         
-    except Exception as e:
-        print(f"❌ Error filtering track quality: {e}")
-        return track_uris  # Return original if filtering fails
+        # Check if it's already a valid Spotify genre
+        if genre_clean in SPOTIFY_VALID_GENRES:
+            return genre_clean
+        
+        # Fallback: try to find a similar genre
+        for valid_genre in SPOTIFY_VALID_GENRES:
+            if genre_clean in valid_genre or valid_genre in genre_clean:
+                return valid_genre
+        
+        return "pop"
 
-def calculate_playlist_duration(track_uris, headers):
-    """Calculate total playlist duration in minutes"""
-    try:
-        track_data = get_tracks_with_duration(track_uris, headers)
-        total_ms = sum(track['duration_ms'] for track in track_data)
-        return total_ms / 60000  # Convert to minutes
-    except Exception as e:
-        print(f"❌ Error calculating duration: {e}")
-        return 0
-
-def mix_tracks_intelligently(artist_tracks, recommendation_tracks, fallback_tracks, 
-                       target_duration_ms, favorite_artists):
-    """Mix tracks intelligently to avoid clustering by artist"""
-    try:
-        print(f"🎭 Mixing tracks intelligently...")
-        print(f"📊 Input: {len(artist_tracks)} artist, {len(recommendation_tracks)} recs, {len(fallback_tracks)} fallback")
+    def _optimize_playlist_order(self, tracks):
+        """Optimize the order of tracks to avoid artist clustering"""
+        if len(tracks) <= 3:
+            return tracks
         
-        # Organize artist tracks by artist
-        artist_buckets = {}
-        for track in artist_tracks:
+        print(f"{self.logger_prefix} 🎭 Optimizing playlist order...")
+        
+        # Group tracks by artist
+        artist_groups = {}
+        for track in tracks:
             artist = track.get('artist', 'Unknown')
-            if artist not in artist_buckets:
-                artist_buckets[artist] = []
-            artist_buckets[artist].append(track)
+            if artist not in artist_groups:
+                artist_groups[artist] = []
+            artist_groups[artist].append(track)
         
-        # Create the mixed playlist
-        mixed_playlist = []
-        current_duration = 0
+        # If mostly single tracks per artist, just shuffle
+        if len(artist_groups) >= len(tracks) * 0.8:
+            optimized = tracks.copy()
+            random.shuffle(optimized)
+            return optimized
         
-        # Round-robin through artist buckets first
-        max_rounds = max(len(bucket) for bucket in artist_buckets.values()) if artist_buckets else 0
+        # Distribute tracks to avoid clustering
+        optimized = []
+        max_rounds = max(len(group) for group in artist_groups.values())
         
         for round_num in range(max_rounds):
-            if current_duration >= target_duration_ms:
-                break
+            for artist, group in artist_groups.items():
+                if round_num < len(group):
+                    optimized.append(group[round_num])
+        
+        print(f"{self.logger_prefix} ✅ Playlist order optimized")
+        return optimized
+
+    def create_spotify_playlist(self):
+        """Create the final Spotify playlist"""
+        print(f"{self.logger_prefix} 🎵 Creating Spotify playlist...")
+        
+        if not self.final_playlist:
+            print(f"{self.logger_prefix} ❌ No tracks available for playlist creation")
+            return None
+        
+        if not self.spotify_user_id:
+            print(f"{self.logger_prefix} ❌ No Spotify user ID available")
+            return None
+        
+        # Create playlist
+        playlist_id = create_new_playlist(
+            self.headers,
+            self.spotify_user_id,
+            self.event_name,
+            f"MoodQue playlist for {self.event_name}"
+        )
+        
+        if not playlist_id:
+            print(f"{self.logger_prefix} ❌ Failed to create playlist")
+            return None
+        
+        # Extract URIs and add tracks
+        track_uris = [track['spotify_uri'] for track in self.final_playlist if track.get('spotify_uri')]
+        
+        if not track_uris:
+            print(f"{self.logger_prefix} ❌ No valid track URIs")
+            return None
+        
+        success = add_tracks_to_playlist(self.headers, self.spotify_user_id, playlist_id, track_uris)
+        
+        if success:
+            playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+            
+            # Calculate actual duration
+            total_duration = sum(
+                track.get('spotify_details', {}).get('duration_ms', 210000)
+                for track in self.final_playlist
+            ) / 60000
+            
+            print(f"{self.logger_prefix} ✅ Playlist created: {len(track_uris)} tracks, {total_duration:.1f} minutes")
+            print(f"{self.logger_prefix} 🔗 URL: {playlist_url}")
+            
+            # Track interaction
+            try:
+                track_interaction(
+                    user_id=self.user_id,
+                    event_type="built_playlist",
+                    data={
+                        "playlist_id": playlist_id,
+                        "mood_tags": [self.mood_tags] if self.mood_tags else [],
+                        "genres": [self.genre] if self.genre else [],
+                        "event": self.event_name,
+                        "track_count": len(track_uris),
+                        "duration_minutes": total_duration
+                    }
+                )
+            except Exception as e:
+                print(f"{self.logger_prefix} ⚠️ Failed to track interaction: {e}")
+            
+            return playlist_url
+        else:
+            print(f"{self.logger_prefix} ❌ Failed to add tracks to playlist")
+            return None
+
+    def build_playlist(self):
+        """Main method to build the complete playlist"""
+        print(f"{self.logger_prefix} 🚀 Starting playlist build process...")
+        
+        try:
+            # Step 1: Authenticate
+            if not self.authenticate_spotify():
+                print(f"{self.logger_prefix} ❌ Authentication failed")
+                return None
+            
+            # Step 2: Analyze preferences
+            era_weights = self.analyze_era_preferences()
+            
+            # Step 3: Discover artists
+            self.discover_artists_lastfm(era_weights)
+            
+            # Step 4: Select tracks with logic
+            self.select_tracks_with_logic(era_weights)
+            
+            # Step 5: Find tracks on Spotify
+            self.find_spotify_tracks()
+            
+            # Step 6: Create playlist
+            playlist_url = self.create_spotify_playlist()
+            
+            if playlist_url:
+                print(f"{self.logger_prefix} 🎉 Playlist build complete!")
+                return playlist_url
+            else:
+                print(f"{self.logger_prefix} ❌ Playlist build failed")
+                return None
                 
-            # Add one track from each artist (if they have tracks left)
-            for artist_name in favorite_artists:
-                if current_duration >= target_duration_ms:
-                    break
-                    
-                if artist_name in artist_buckets and len(artist_buckets[artist_name]) > round_num:
-                    track = artist_buckets[artist_name][round_num]
-                    mixed_playlist.append(track)
-                    current_duration += track['duration_ms']
-                    print(f"🎵 Added: {track['name']} by {track['artist']}")
-                    
-                    # Add 1-2 non-artist tracks after each artist track
-                    non_artist_added = 0
-                    
-                    # Try recommendations first
-                    for rec_track in recommendation_tracks:
-                        if (current_duration >= target_duration_ms or 
-                            non_artist_added >= 2 or 
-                            rec_track in mixed_playlist):
-                            break
-                        
-                        # Make sure it's not from a favorite artist
-                        if not any(fav_artist.lower() in rec_track.get('artist', '').lower() 
-                                  for fav_artist in favorite_artists):
-                            mixed_playlist.append(rec_track)
-                            current_duration += rec_track['duration_ms']
-                            non_artist_added += 1
-                            print(f"🔀 Added rec: {rec_track['name']} by {rec_track['artist']}")
-                    
-                    # Fill with fallback if needed
-                    for fallback_track in fallback_tracks:
-                        if (current_duration >= target_duration_ms or 
-                            non_artist_added >= 2 or 
-                            fallback_track in mixed_playlist):
-                            break
-                        
-                        if not any(fav_artist.lower() in fallback_track.get('artist', '').lower() 
-                                  for fav_artist in favorite_artists):
-                            mixed_playlist.append(fallback_track)
-                            current_duration += fallback_track['duration_ms']
-                            non_artist_added += 1
-                            print(f"🔄 Added fallback: {fallback_track['name']} by {fallback_track['artist']}")
-        
-        # Fill remaining time with any unused tracks
-        all_remaining = [t for t in recommendation_tracks + fallback_tracks if t not in mixed_playlist]
-        for track in all_remaining:
-            if current_duration >= target_duration_ms:
-                break
-            mixed_playlist.append(track)
-            current_duration += track['duration_ms']
-        
-        final_duration = current_duration / 60000
-        print(f"🎭 Mixed playlist complete: {len(mixed_playlist)} tracks, {final_duration:.1f} minutes")
-        
-        return mixed_playlist
-        
-    except Exception as e:
-        print(f"❌ Error mixing tracks: {e}")
-        return artist_tracks + recommendation_tracks + fallback_tracks
+        except Exception as e:
+            print(f"{self.logger_prefix} ❌ Critical error in playlist build: {e}")
+            traceback.print_exc()
+            return None
+
+
+# Main function to replace build_smart_playlist_enhanced
+def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
+                                  favorite_artist, user_id=None, playlist_type="clean",
+                                  request_id=None, birth_year=None):
+    """
+    Enhanced playlist builder using the new MoodQue Engine
+    """
+    # Prepare request data
+    request_data = {
+        'event_name': event_name,
+        'genre': genre,
+        'time': time,
+        'mood_tags': mood_tags,
+        'search_keywords': search_keywords,
+        'favorite_artist': favorite_artist,
+        'user_id': user_id,
+        'playlist_type': playlist_type,
+        'request_id': request_id,
+        'birth_year': birth_year
+    }
+    
+    # Initialize and run engine
+    engine = MoodQueEngine(request_data)
+    return engine.build_playlist()
