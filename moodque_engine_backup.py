@@ -175,6 +175,24 @@ def get_spotify_user_id(headers):
         print(f"❌ Error getting user ID: {e}")
         return None
 
+def create_new_playlist(headers, user_id, name, description="MoodQue Auto Playlist"):
+    """Create new playlist with correct parameter order"""
+    try:
+        url = f"https://api.spotify.com/v1/users/{user_id}/playlists"
+        data = {
+            "name": name,
+            "description": description,
+            "public": False
+        }
+        res = requests.post(url, headers=headers, json=data)
+        if res.status_code == 201:
+            return res.json()["id"]
+        else:
+            print(f"❌ Failed to create playlist: {res.status_code} - {res.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Exception creating playlist: {e}")
+        return None
 
 def add_tracks_to_playlist(headers, user_id, playlist_id, track_uris):
     """Add tracks to playlist with better error handling"""
@@ -813,10 +831,8 @@ def emergency_track_search(headers, limit, playlist_type="clean"):
 # build_smart_playlist_enhanced function
 
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
-                                  favorite_artist, user_id=None, playlist_type="clean",
-                                  request_id=None):
-    if not event_name:
-        event_name = "Untitled MoodQue Mix"
+                                   favorite_artist, user_id=None, playlist_type="clean",
+                                   request_id=None):
     logger_prefix = f"[{request_id}]" if request_id else ""
     print(f"{logger_prefix} 🎯 Building playlist for event: '{event_name}'")
     print(f"{logger_prefix} 🔥 Genre Input: {genre}")

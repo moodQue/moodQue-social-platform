@@ -287,13 +287,12 @@ def glide_social():
     event = data.get("event")
     time_duration = data.get("time", 30)
     playlist_type = data.get("playlist_type", "clean")
-    webhook_return_url = data.get("webhook_return_url")
+    webhook_return_url = data.get("webhook_return_url") or os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
 
     processing_start = datetime.now()
-    track_count = 0  # Initialize track count
+    track_count = 0
 
     try:
-        # Use the updated function signature
         playlist_result = build_smart_playlist_enhanced(
             event_name=event or "My Playlist",
             genre=genre,
@@ -308,23 +307,17 @@ def glide_social():
         
         if playlist_result:
             logger.info(f"✅ Playlist created: {playlist_result}")
-            
-            # Get track count from the created playlist
             try:
                 from moodque_auth import get_spotify_access_token
-                import requests
-                
-                playlist_id = playlist_result.split('/')[-1] if '/' in playlist_result else ""
-                if playlist_id:
-                    token = get_spotify_access_token()
-                    headers = {"Authorization": f"Bearer {token}"}
-                    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-                    response = requests.get(playlist_url, headers=headers)
-                    
-                    if response.status_code == 200:
-                        playlist_data = response.json()
-                        track_count = playlist_data.get("tracks", {}).get("total", 0)
-                        logger.info(f"📊 Actual track count from Spotify: {track_count}")
+                token = get_spotify_access_token()
+                headers = {"Authorization": f"Bearer {token}"}
+                playlist_id = playlist_result.split('/')[-1]
+                playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+                response = requests.get(playlist_url, headers=headers)
+                if response.status_code == 200:
+                    playlist_data = response.json()
+                    track_count = playlist_data.get("tracks", {}).get("total", 0)
+                    logger.info(f"📊 Actual track count from Spotify: {track_count}")
             except Exception as e:
                 logger.warning(f"⚠️ Could not fetch track count: {e}")
         else:
@@ -336,17 +329,26 @@ def glide_social():
         traceback.print_exc()
         playlist_result = None
 
-    # FIXED: Pass track_count to prepare_response_data
     response_data = prepare_response_data(
-        row_id, 
-        playlist_result, 
-        user_id=user_id, 
+        row_id=row_id,
+        playlist_info=playlist_result,
+        user_id=user_id,
         processing_time_start=processing_start,
-        track_count=track_count  # Pass the actual track count
+        track_count=track_count
     )
-    
-    # Rest of your existing code for tracking and webhook response...
-    
+
+    # ✅ Post response back to Glide webhook if available
+    if webhook_return_url:
+        try:
+            logger.info(f"📤 Sending playlist result to Glide return webhook: {webhook_return_url}")
+            post_response = post_data_back_to_glide(webhook_return_url, response_data)
+            if post_response and post_response.status_code == 200:
+                logger.info("✅ Successfully posted to Glide webhook")
+            else:
+                logger.warning(f"⚠️ Glide webhook returned status: {post_response.status_code if post_response else 'no response'}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send to Glide webhook: {e}")
+
     return jsonify(response_data)
 
 # --- Legacy Playlist Builder ---
