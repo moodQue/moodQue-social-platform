@@ -288,11 +288,21 @@ def glide_social():
     
     # Check all possible locations for row_id
     if isinstance(data, dict):
-        # Try direct keys first
+        # Try direct keys first (including Glide's emoji-prefixed format)
         row_id = (data.get("row_id") or 
                  data.get("id") or 
                  data.get("rowID") or
-                 data.get("Row ID"))
+                 data.get("Row ID") or
+                 data.get("🔒 row_id") or  # FIXED: Handle Glide's emoji format
+                 data.get("🔒row_id"))     # Alternative without space
+        
+        # If still not found, search through all keys for anything containing 'row_id'
+        if not row_id:
+            for key, value in data.items():
+                if 'row_id' in key.lower():
+                    row_id = value
+                    logger.info(f"🔍 Found row_id in field: '{key}' = '{value}'")
+                    break
         
         # If not found, check in body
         if not row_id and "body" in data:
@@ -301,7 +311,17 @@ def glide_social():
                 row_id = (body_data.get("row_id") or 
                          body_data.get("id") or 
                          body_data.get("rowID") or
-                         body_data.get("Row ID"))
+                         body_data.get("Row ID") or
+                         body_data.get("🔒 row_id") or
+                         body_data.get("🔒row_id"))
+                
+                # Search in body for row_id-containing keys
+                if not row_id:
+                    for key, value in body_data.items():
+                        if 'row_id' in key.lower():
+                            row_id = value
+                            logger.info(f"🔍 Found row_id in body field: '{key}' = '{value}'")
+                            break
     
     # CRITICAL: If no row_id found, log the full request and return error
     if not row_id:
