@@ -283,8 +283,20 @@ def glide_social():
     data = request.get_json()
     logger.info(f"📥 Glide social data received: {json.dumps(data, indent=2)}")
 
-    # FIXED: Extract parameters with proper fallbacks and validation
-    row_id = data.get("row_id") or data.get("id") or str(uuid.uuid4())[:8]
+    # FIXED: Extract row_id first and ensure it's properly passed through
+    row_id = data.get("row_id") or data.get("id") or data.get("rowID")
+    if not row_id:
+        # If still no row_id, check in body
+        body_data = data.get("body", {}) if isinstance(data.get("body"), dict) else {}
+        row_id = body_data.get("row_id") or body_data.get("id") or body_data.get("rowID")
+    
+    # Generate fallback only if absolutely no row_id found
+    if not row_id:
+        row_id = str(uuid.uuid4())[:8]
+        logger.warning(f"⚠️ No row_id found in request, generated fallback: {row_id}")
+    
+    logger.info(f"🔑 Using row_id: {row_id}")
+    
     user_id = data.get("user_id") or data.get("userId") or "anonymous"
     
     # FIXED: Handle nested data structure if present
@@ -295,7 +307,13 @@ def glide_social():
     artist = data.get("artist") or data.get("favorite_artist") or body_data.get("artist") or body_data.get("favorite_artist")
     mood = data.get("mood") or data.get("mood_tags") or body_data.get("mood") or body_data.get("mood_tags")
     event = data.get("event") or data.get("event_name") or body_data.get("event") or body_data.get("event_name") or "My Playlist"
-    time_duration = int(data.get("time", body_data.get("time", 30)))
+    
+    # FIXED: Safer time duration handling
+    try:
+        time_duration = int(data.get("time", body_data.get("time", 30)))
+    except (ValueError, TypeError):
+        time_duration = 30
+        
     playlist_type = data.get("playlist_type", body_data.get("playlist_type", "clean"))
     birth_year = data.get("birth_year") or body_data.get("birth_year")
     search_keywords = data.get("search_keywords") or body_data.get("search_keywords")
@@ -305,7 +323,7 @@ def glide_social():
                          body_data.get("webhook_return_url") or 
                          os.environ.get("GLIDE_RETURN_WEBHOOK_URL"))
 
-    # ADDED: Log extracted parameters for debugging
+    # ADDED: Log all extracted parameters for debugging
     logger.info(f"🔍 Extracted parameters:")
     logger.info(f"  row_id: {row_id}")
     logger.info(f"  user_id: {user_id}")
@@ -322,6 +340,7 @@ def glide_social():
 
     try:
         # FIXED: Pass all parameters correctly with proper request_id
+        # CRITICAL: Make sure row_id is passed as request_id here
         playlist_result = build_smart_playlist_enhanced(
             event_name=event,
             genre=genre,
@@ -331,7 +350,7 @@ def glide_social():
             favorite_artist=artist,
             user_id=user_id,
             playlist_type=playlist_type,
-            request_id=row_id,  # FIXED: Pass row_id as request_id
+            request_id=row_id,  # FIXED: This should be the actual row_id from Glide
             birth_year=birth_year
         )
         
@@ -362,7 +381,7 @@ def glide_social():
 
     # FIXED: Pass correct parameters to prepare_response_data
     response_data = prepare_response_data(
-        row_id=row_id,
+        row_id=row_id,  # This should now be the correct row_id from Glide
         playlist_info=playlist_result,
         user_id=user_id,
         processing_time_start=processing_start,
@@ -373,6 +392,7 @@ def glide_social():
     if webhook_return_url:
         try:
             logger.info(f"📤 Sending playlist result to Glide return webhook: {webhook_return_url}")
+            logger.info(f"🔑 Response data row_id: {response_data.get('row_id')}")
             post_response = post_data_back_to_glide(webhook_return_url, response_data)
             if post_response and post_response.status_code == 200:
                 logger.info("✅ Successfully posted to Glide webhook")
