@@ -1,6 +1,5 @@
 # complete_moodque_engine.py - Full Featured MoodQue Engine
 
-
 from firebase_admin import firestore
 
 def get_user_id_from_spotify_id(spotify_user_id):
@@ -12,7 +11,6 @@ def get_user_id_from_spotify_id(spotify_user_id):
         return doc.id  # Or use doc.to_dict().get("user_id") if stored inside
 
     return None
-
 
 from lastfm_recommender import get_recommendations, get_similar_artists, get_genre_seed_artists
 import os
@@ -41,6 +39,7 @@ from moodque_utilities import (
     calculate_playlist_duration,
     search_spotify_track
 )
+
 # Load .env only in local dev
 if os.environ.get("RAILWAY_ENVIRONMENT") is None:
     try:
@@ -49,7 +48,6 @@ if os.environ.get("RAILWAY_ENVIRONMENT") is None:
         logging.info("✅ .env loaded for local development")
     except ImportError:
         logging.warning("⚠️ dotenv not installed – skipping .env load")
-    
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -104,7 +102,6 @@ GENRE_MAPPING = {
     "electronic": "electronic"
 }
 
-# Fixed MoodQueEngine __init__ method in moodque_engine.py
 class MoodQueEngine:
     """Main class for building MoodQue playlists with Spotify integration"""
     
@@ -165,75 +162,18 @@ class MoodQueEngine:
         # Initialize components
         self.access_token = None
         self.headers = None
-def __init__(self, request_data):
-    """Initialize with clean request data"""
-    self.request_data = request_data
-    
-    # FIXED: Handle user_id properly with fallbacks
-    self.user_id = (request_data.get('user_id') or 
-                   request_data.get('userId') or 
-                   'anonymous')
-    
-    # FIXED: Prioritize request_id from multiple possible keys and preserve original value
-    self.request_id = (request_data.get('request_id') or 
-                      request_data.get('row_id') or 
-                      request_data.get('id') or 
-                      request_data.get('rowID'))
-    
-    # Only generate fallback UUID if absolutely no ID is provided
-    if not self.request_id:
-        self.request_id = str(uuid.uuid4())[:8]
-        print(f"⚠️ No request_id found, generated fallback: {self.request_id}")
-    else:
-        print(f"✅ Using provided request_id: {self.request_id}")
-    
-    self.logger_prefix = f"[{self.request_id}]"
-    
-    # FIXED: Extract and validate parameters with better fallback handling
-    self.event_name = (request_data.get('event_name') or 
-                      request_data.get('event') or 
-                      "Untitled MoodQue Mix")
-    
-    self.genre = request_data.get('genre', 'pop')
-    
-    # FIXED: Handle time parameter conversion safely
-    try:
-        self.time_minutes = int(request_data.get('time', 30))
-    except (ValueError, TypeError):
-        self.time_minutes = 30
+        self.spotify_user_id = None
         
-    self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
-    self.search_keywords = request_data.get('search_keywords')
-    
-    # FIXED: Handle favorite_artist with multiple possible keys
-    self.favorite_artist = (request_data.get('favorite_artist') or 
-                           request_data.get('artist'))
-    
-    self.playlist_type = request_data.get('playlist_type', 'clean')
-    
-    # FIXED: Handle birth_year safely
-    self.birth_year = request_data.get('birth_year')
-    if self.birth_year:
-        try:
-            self.birth_year = int(self.birth_year)
-        except (ValueError, TypeError):
-            self.birth_year = None
-    
-    # Initialize components
-    self.access_token = None
-    self.headers = None
-    self.spotify_user_id = None
-    
-    # Results storage
-    self.artist_pool = []
-    self.track_candidates = []
-    self.final_playlist = []
-    
-    # Audio feature parameters for mood matching
-    self.mood_audio_params = self._get_mood_audio_params()
-    
-    print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
-    print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
+        # Results storage
+        self.artist_pool = []
+        self.track_candidates = []
+        self.final_playlist = []
+        
+        # Audio feature parameters for mood matching
+        self.mood_audio_params = self._get_mood_audio_params()
+        
+        print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
+        print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
 
     def _format_parameters(self):
         """Format parameters for logging"""
@@ -861,8 +801,6 @@ def __init__(self, request_data):
 
 
 # Main function to replace build_smart_playlist_enhanced
-# Fixed build_smart_playlist_enhanced function in moodque_engine.py
-
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
                                   favorite_artist, user_id=None, playlist_type="clean",
                                   request_id=None, birth_year=None):
