@@ -1,6 +1,19 @@
 # complete_moodque_engine.py - Full Featured MoodQue Engine
 
-from dotenv import load_dotenv
+
+from firebase_admin import firestore
+
+def get_user_id_from_spotify_id(spotify_user_id):
+    db = firestore.client()
+    users_ref = db.collection("users")
+    query = users_ref.where("spotify_user_id", "==", spotify_user_id).limit(1).stream()
+
+    for doc in query:
+        return doc.id  # Or use doc.to_dict().get("user_id") if stored inside
+
+    return None
+
+
 from lastfm_recommender import get_recommendations, get_similar_artists, get_genre_seed_artists
 import os
 import requests
@@ -28,7 +41,11 @@ from moodque_utilities import (
     calculate_playlist_duration,
     search_spotify_track
 )
-
+# Load .env only in local dev
+if os.getenv("ENV") == "local":
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=".env")
+    
 load_dotenv(dotenv_path=".env")
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
