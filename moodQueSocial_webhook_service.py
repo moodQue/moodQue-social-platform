@@ -283,19 +283,41 @@ def glide_social():
     data = request.get_json()
     logger.info(f"📥 Glide social data received: {json.dumps(data, indent=2)}")
 
-    # FIXED: Extract row_id first and ensure it's properly passed through
-    row_id = data.get("row_id") or data.get("id") or data.get("rowID")
-    if not row_id:
-        # If still no row_id, check in body
-        body_data = data.get("body", {}) if isinstance(data.get("body"), dict) else {}
-        row_id = body_data.get("row_id") or body_data.get("id") or body_data.get("rowID")
+    # FIXED: Extract row_id more thoroughly and DO NOT generate fallback
+    row_id = None
     
-    # Generate fallback only if absolutely no row_id found
-    if not row_id:
-        row_id = str(uuid.uuid4())[:8]
-        logger.warning(f"⚠️ No row_id found in request, generated fallback: {row_id}")
+    # Check all possible locations for row_id
+    if isinstance(data, dict):
+        # Try direct keys first
+        row_id = (data.get("row_id") or 
+                 data.get("id") or 
+                 data.get("rowID") or
+                 data.get("Row ID"))
+        
+        # If not found, check in body
+        if not row_id and "body" in data:
+            body_data = data.get("body", {})
+            if isinstance(body_data, dict):
+                row_id = (body_data.get("row_id") or 
+                         body_data.get("id") or 
+                         body_data.get("rowID") or
+                         body_data.get("Row ID"))
     
-    logger.info(f"🔑 Using row_id: {row_id}")
+    # CRITICAL: If no row_id found, log the full request and return error
+    if not row_id:
+        logger.error(f"❌ CRITICAL: No row_id found in request!")
+        logger.error(f"📋 Full request data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        logger.error(f"📋 Body keys: {list(data.get('body', {}).keys()) if isinstance(data.get('body'), dict) else 'No body or not dict'}")
+        
+        # Return error response instead of generating fallback
+        error_response = {
+            "error": "No row_id provided in request",
+            "status": "failed",
+            "message": "row_id is required but was not found in the request data"
+        }
+        return jsonify(error_response), 400
+    
+    logger.info(f"🔑 Found row_id: {row_id}")
     
     user_id = data.get("user_id") or data.get("userId") or "anonymous"
     
@@ -339,8 +361,7 @@ def glide_social():
     track_count = 0
 
     try:
-        # FIXED: Pass all parameters correctly with proper request_id
-        # CRITICAL: Make sure row_id is passed as request_id here
+        # CRITICAL: Pass the exact row_id from Glide as request_id
         playlist_result = build_smart_playlist_enhanced(
             event_name=event,
             genre=genre,
@@ -350,7 +371,7 @@ def glide_social():
             favorite_artist=artist,
             user_id=user_id,
             playlist_type=playlist_type,
-            request_id=row_id,  # FIXED: This should be the actual row_id from Glide
+            request_id=row_id,  # FIXED: This must be the exact row_id from Glide
             birth_year=birth_year
         )
         
@@ -379,9 +400,9 @@ def glide_social():
         traceback.print_exc()
         playlist_result = None
 
-    # FIXED: Pass correct parameters to prepare_response_data
+    # CRITICAL: Use the exact row_id from Glide in response
     response_data = prepare_response_data(
-        row_id=row_id,  # This should now be the correct row_id from Glide
+        row_id=row_id,  # This should be the exact row_id from Glide
         playlist_info=playlist_result,
         user_id=user_id,
         processing_time_start=processing_start,

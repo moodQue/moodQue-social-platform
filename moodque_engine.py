@@ -105,75 +105,77 @@ GENRE_MAPPING = {
 class MoodQueEngine:
     """Main class for building MoodQue playlists with Spotify integration"""
     
-    def __init__(self, request_data):
-        """Initialize with clean request data"""
-        self.request_data = request_data
+def __init__(self, request_data):
+    """Initialize with clean request data"""
+    self.request_data = request_data
+    
+    # FIXED: Handle user_id properly with fallbacks
+    self.user_id = (request_data.get('user_id') or 
+                   request_data.get('userId') or 
+                   'anonymous')
+    
+    # CRITICAL: Get request_id but DO NOT generate fallback UUID
+    self.request_id = (request_data.get('request_id') or 
+                      request_data.get('row_id') or 
+                      request_data.get('id') or 
+                      request_data.get('rowID'))
+    
+    # CRITICAL: If no request_id found, raise an error instead of generating UUID
+    if not self.request_id:
+        error_msg = f"❌ CRITICAL: No request_id found in MoodQueEngine initialization"
+        print(error_msg)
+        print(f"📋 Available keys: {list(request_data.keys())}")
+        raise ValueError("request_id is required but not provided")
+    
+    print(f"✅ Using provided request_id: {self.request_id}")
+    
+    self.logger_prefix = f"[{self.request_id}]"
+    
+    # FIXED: Extract and validate parameters with better fallback handling
+    self.event_name = (request_data.get('event_name') or 
+                      request_data.get('event') or 
+                      "Untitled MoodQue Mix")
+    
+    self.genre = request_data.get('genre', 'pop')
+    
+    # FIXED: Handle time parameter conversion safely
+    try:
+        self.time_minutes = int(request_data.get('time', 30))
+    except (ValueError, TypeError):
+        self.time_minutes = 30
         
-        # FIXED: Handle user_id properly with fallbacks
-        self.user_id = (request_data.get('user_id') or 
-                       request_data.get('userId') or 
-                       'anonymous')
-        
-        # FIXED: Prioritize request_id from multiple possible keys and preserve original value
-        self.request_id = (request_data.get('request_id') or 
-                          request_data.get('row_id') or 
-                          request_data.get('id') or 
-                          request_data.get('rowID'))
-        
-        # Only generate fallback UUID if absolutely no ID is provided
-        if not self.request_id:
-            self.request_id = str(uuid.uuid4())[:8]
-            print(f"⚠️ No request_id found, generated fallback: {self.request_id}")
-        else:
-            print(f"✅ Using provided request_id: {self.request_id}")
-        
-        self.logger_prefix = f"[{self.request_id}]"
-        
-        # FIXED: Extract and validate parameters with better fallback handling
-        self.event_name = (request_data.get('event_name') or 
-                          request_data.get('event') or 
-                          "Untitled MoodQue Mix")
-        
-        self.genre = request_data.get('genre', 'pop')
-        
-        # FIXED: Handle time parameter conversion safely
+    self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
+    self.search_keywords = request_data.get('search_keywords')
+    
+    # FIXED: Handle favorite_artist with multiple possible keys
+    self.favorite_artist = (request_data.get('favorite_artist') or 
+                           request_data.get('artist'))
+    
+    self.playlist_type = request_data.get('playlist_type', 'clean')
+    
+    # FIXED: Handle birth_year safely
+    self.birth_year = request_data.get('birth_year')
+    if self.birth_year:
         try:
-            self.time_minutes = int(request_data.get('time', 30))
+            self.birth_year = int(self.birth_year)
         except (ValueError, TypeError):
-            self.time_minutes = 30
-            
-        self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
-        self.search_keywords = request_data.get('search_keywords')
-        
-        # FIXED: Handle favorite_artist with multiple possible keys
-        self.favorite_artist = (request_data.get('favorite_artist') or 
-                               request_data.get('artist'))
-        
-        self.playlist_type = request_data.get('playlist_type', 'clean')
-        
-        # FIXED: Handle birth_year safely
-        self.birth_year = request_data.get('birth_year')
-        if self.birth_year:
-            try:
-                self.birth_year = int(self.birth_year)
-            except (ValueError, TypeError):
-                self.birth_year = None
-        
-        # Initialize components
-        self.access_token = None
-        self.headers = None
-        self.spotify_user_id = None
-        
-        # Results storage
-        self.artist_pool = []
-        self.track_candidates = []
-        self.final_playlist = []
-        
-        # Audio feature parameters for mood matching
-        self.mood_audio_params = self._get_mood_audio_params()
-        
-        print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
-        print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
+            self.birth_year = None
+    
+    # Initialize components
+    self.access_token = None
+    self.headers = None
+    self.spotify_user_id = None
+    
+    # Results storage
+    self.artist_pool = []
+    self.track_candidates = []
+    self.final_playlist = []
+    
+    # Audio feature parameters for mood matching
+    self.mood_audio_params = self._get_mood_audio_params()
+    
+    print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
+    print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
 
     def _format_parameters(self):
         """Format parameters for logging"""
@@ -807,9 +809,11 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
     """
     Enhanced playlist builder using the new MoodQue Engine
     """
-    # FIXED: Ensure request_id is always available
+    # CRITICAL: request_id is now required - do not generate fallback
     if not request_id:
-        request_id = str(uuid.uuid4())[:8]
+        error_msg = "❌ CRITICAL: request_id is required but not provided to build_smart_playlist_enhanced"
+        print(error_msg)
+        raise ValueError("request_id parameter is required")
     
     # FIXED: Ensure user_id is properly handled
     if not user_id or user_id == 'unknown':
@@ -838,7 +842,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         'favorite_artist': favorite_artist,
         'user_id': user_id,
         'playlist_type': playlist_type,
-        'request_id': request_id,
+        'request_id': request_id,  # CRITICAL: Pass the exact request_id from Glide
         'birth_year': birth_year
     }
     
