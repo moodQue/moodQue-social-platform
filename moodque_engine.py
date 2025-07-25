@@ -50,7 +50,6 @@ if os.environ.get("RAILWAY_ENVIRONMENT") is None:
     except ImportError:
         logging.warning("⚠️ dotenv not installed – skipping .env load")
     
-load_dotenv(dotenv_path=".env")
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
