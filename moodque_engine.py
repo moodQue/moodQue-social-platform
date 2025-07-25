@@ -42,9 +42,13 @@ from moodque_utilities import (
     search_spotify_track
 )
 # Load .env only in local dev
-if os.getenv("ENV") == "local":
-    from dotenv import load_dotenv
-    load_dotenv(dotenv_path=".env")
+if os.environ.get("RAILWAY_ENVIRONMENT") is None:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=".env")
+        logging.info("✅ .env loaded for local development")
+    except ImportError:
+        logging.warning("⚠️ dotenv not installed – skipping .env load")
     
 load_dotenv(dotenv_path=".env")
 
