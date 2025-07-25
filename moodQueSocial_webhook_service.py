@@ -331,7 +331,7 @@ def glide_social():
             favorite_artist=artist,
             user_id=user_id,
             playlist_type=playlist_type,
-            request_id=row_id,  # FIXED: Pass row_id as request_id
+            row_id=row_id,  # FIXED: Pass row_id as row_id
             birth_year=birth_year
         )
         
