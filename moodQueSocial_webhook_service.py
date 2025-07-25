@@ -4,6 +4,8 @@ import logging
 import requests
 import urllib.parse
 import time
+import uuid
+from moodque_engine import MoodQueEngine
 from moodque_auth import auth_bp
 from flask import Flask, request, redirect, jsonify
 from datetime import datetime
@@ -274,40 +276,69 @@ def test_spotify_webhook():
 # (No changes needed to that function)
 
 # --- Glide Social Endpoint (Build and Return) ---
+# Fixed version of your glide_social endpoint in moodQueSocial_webhook_service.py
+
 @app.route('/glide_social', methods=['POST'])
 def glide_social():
     data = request.get_json()
     logger.info(f"📥 Glide social data received: {json.dumps(data, indent=2)}")
 
-    row_id = data.get("row_id")
-    user_id = data.get("user_id")
-    genre = data.get("genre")
-    artist = data.get("artist")
-    mood = data.get("mood")
-    event = data.get("event")
-    time_duration = data.get("time", 30)
-    playlist_type = data.get("playlist_type", "clean")
-    webhook_return_url = data.get("webhook_return_url") or os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
+    # FIXED: Extract parameters with proper fallbacks and validation
+    row_id = data.get("row_id") or data.get("id") or str(uuid.uuid4())[:8]
+    user_id = data.get("user_id") or data.get("userId") or "anonymous"
+    
+    # FIXED: Handle nested data structure if present
+    body_data = data.get("body", {}) if isinstance(data.get("body"), dict) else {}
+    
+    # Extract parameters from both root level and body level
+    genre = data.get("genre") or body_data.get("genre") or "pop"
+    artist = data.get("artist") or data.get("favorite_artist") or body_data.get("artist") or body_data.get("favorite_artist")
+    mood = data.get("mood") or data.get("mood_tags") or body_data.get("mood") or body_data.get("mood_tags")
+    event = data.get("event") or data.get("event_name") or body_data.get("event") or body_data.get("event_name") or "My Playlist"
+    time_duration = int(data.get("time", body_data.get("time", 30)))
+    playlist_type = data.get("playlist_type", body_data.get("playlist_type", "clean"))
+    birth_year = data.get("birth_year") or body_data.get("birth_year")
+    search_keywords = data.get("search_keywords") or body_data.get("search_keywords")
+    
+    # FIXED: Get webhook URL properly
+    webhook_return_url = (data.get("webhook_return_url") or 
+                         body_data.get("webhook_return_url") or 
+                         os.environ.get("GLIDE_RETURN_WEBHOOK_URL"))
+
+    # ADDED: Log extracted parameters for debugging
+    logger.info(f"🔍 Extracted parameters:")
+    logger.info(f"  row_id: {row_id}")
+    logger.info(f"  user_id: {user_id}")
+    logger.info(f"  genre: {genre}")
+    logger.info(f"  artist: {artist}")
+    logger.info(f"  mood: {mood}")
+    logger.info(f"  event: {event}")
+    logger.info(f"  time: {time_duration}")
+    logger.info(f"  playlist_type: {playlist_type}")
+    logger.info(f"  birth_year: {birth_year}")
 
     processing_start = datetime.now()
     track_count = 0
 
     try:
+        # FIXED: Pass all parameters correctly with proper request_id
         playlist_result = build_smart_playlist_enhanced(
-            event_name=event or "My Playlist",
+            event_name=event,
             genre=genre,
             time=time_duration,
             mood_tags=mood,
-            search_keywords=None,
+            search_keywords=search_keywords,
             favorite_artist=artist,
             user_id=user_id,
             playlist_type=playlist_type,
-            request_id=row_id
+            request_id=row_id,  # FIXED: Pass row_id as request_id
+            birth_year=birth_year
         )
         
         if playlist_result:
             logger.info(f"✅ Playlist created: {playlist_result}")
             try:
+                # Get actual track count from Spotify
                 from moodque_auth import get_spotify_access_token
                 token = get_spotify_access_token()
                 headers = {"Authorization": f"Bearer {token}"}
@@ -329,6 +360,7 @@ def glide_social():
         traceback.print_exc()
         playlist_result = None
 
+    # FIXED: Pass correct parameters to prepare_response_data
     response_data = prepare_response_data(
         row_id=row_id,
         playlist_info=playlist_result,
@@ -337,7 +369,7 @@ def glide_social():
         track_count=track_count
     )
 
-    # ✅ Post response back to Glide webhook if available
+    # Post response back to Glide webhook if available
     if webhook_return_url:
         try:
             logger.info(f"📤 Sending playlist result to Glide return webhook: {webhook_return_url}")
@@ -666,4 +698,101 @@ def health_detailed():
             "timestamp": datetime.now().isoformat(),
             "overall_status": "error",
             "error": str(e)
+        }), 500
+        
+        # Add this debugging endpoint to your moodQueSocial_webhook_service.py
+
+@app.route('/debug_parameters', methods=['POST'])
+def debug_parameters():
+    """Debug endpoint to test parameter extraction from Glide"""
+    try:
+        raw_data = request.get_json()
+        logger.info(f"🔍 DEBUG: Raw request data received:")
+        logger.info(f"   Type: {type(raw_data)}")
+        logger.info(f"   Content: {json.dumps(raw_data, indent=2)}")
+        
+        # Test parameter extraction logic
+        data = raw_data
+        body_data = data.get("body", {}) if isinstance(data.get("body"), dict) else {}
+        
+        extracted_params = {
+            "raw_data_keys": list(data.keys()) if isinstance(data, dict) else "Not a dict",
+            "body_data_keys": list(body_data.keys()) if isinstance(body_data, dict) else "No body or not dict",
+            
+            # Test all extraction methods
+            "row_id": data.get("row_id") or data.get("id") or "NOT_FOUND",
+            "user_id": data.get("user_id") or data.get("userId") or "NOT_FOUND",
+            "genre": data.get("genre") or body_data.get("genre") or "NOT_FOUND",
+            "artist": data.get("artist") or data.get("favorite_artist") or body_data.get("artist") or body_data.get("favorite_artist") or "NOT_FOUND",
+            "mood": data.get("mood") or data.get("mood_tags") or body_data.get("mood") or body_data.get("mood_tags") or "NOT_FOUND",
+            "event": data.get("event") or data.get("event_name") or body_data.get("event") or body_data.get("event_name") or "NOT_FOUND",
+            "time": data.get("time", body_data.get("time", "NOT_FOUND")),
+            "playlist_type": data.get("playlist_type", body_data.get("playlist_type", "NOT_FOUND")),
+            "birth_year": data.get("birth_year") or body_data.get("birth_year") or "NOT_FOUND",
+        }
+        
+        logger.info(f"🎯 DEBUG: Extracted parameters:")
+        for key, value in extracted_params.items():
+            logger.info(f"   {key}: {value}")
+        
+        return jsonify({
+            "status": "debug_success",
+            "raw_data": raw_data,
+            "extracted_parameters": extracted_params,
+            "recommendations": {
+                "missing_parameters": [k for k, v in extracted_params.items() if v == "NOT_FOUND"],
+                "data_structure": "Check if Glide is sending data in 'body' object or root level",
+                "next_steps": "Use this info to adjust parameter extraction in glide_social endpoint"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Debug endpoint error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "debug_error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/test_engine_directly', methods=['POST'])
+def test_engine_directly():
+    """Test the MoodQue engine directly with known good parameters"""
+    try:
+        # Test with hardcoded parameters
+        test_request_data = {
+            'event_name': 'Test Playlist',
+            'genre': 'pop',
+            'time': 30,
+            'mood_tags': 'upbeat',
+            'search_keywords': None,
+            'favorite_artist': 'Taylor Swift',
+            'user_id': 'test_user',
+            'playlist_type': 'clean',
+            'request_id': 'test_001',
+            'birth_year': 1995
+        }
+        
+        logger.info(f"🧪 Testing engine with: {test_request_data}")
+        
+        # Test just the engine initialization
+        engine = MoodQueEngine(test_request_data)
+        
+        return jsonify({
+            "status": "engine_test_success",
+            "request_id": engine.request_id,
+            "user_id": engine.user_id,
+            "formatted_params": engine._format_parameters(),
+            "message": "Engine initialized successfully with test parameters"
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Engine test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "engine_test_error",
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }), 500

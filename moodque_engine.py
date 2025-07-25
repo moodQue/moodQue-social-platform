@@ -84,23 +84,55 @@ GENRE_MAPPING = {
     "electronic": "electronic"
 }
 
+# Fixed MoodQueEngine __init__ method in moodque_engine.py
+
 class MoodQueEngine:
     def __init__(self, request_data):
         """Initialize with clean request data"""
         self.request_data = request_data
-        self.user_id = request_data.get('user_id', 'unknown')
-        self.request_id = request_data.get('request_id', str(uuid.uuid4())[:8])
+        
+        # FIXED: Handle user_id properly with fallbacks
+        self.user_id = (request_data.get('user_id') or 
+                       request_data.get('userId') or 
+                       'anonymous')
+        
+        # FIXED: Handle request_id properly with fallbacks
+        self.request_id = (request_data.get('request_id') or 
+                          request_data.get('row_id') or 
+                          request_data.get('id') or 
+                          str(uuid.uuid4())[:8])
+        
         self.logger_prefix = f"[{self.request_id}]"
         
-        # Extract and validate parameters
-        self.event_name = request_data.get('event_name') or "Untitled MoodQue Mix"
+        # FIXED: Extract and validate parameters with better fallback handling
+        self.event_name = (request_data.get('event_name') or 
+                          request_data.get('event') or 
+                          "Untitled MoodQue Mix")
+        
         self.genre = request_data.get('genre', 'pop')
-        self.time_minutes = int(request_data.get('time', 30))
-        self.mood_tags = request_data.get('mood_tags')
+        
+        # FIXED: Handle time parameter conversion safely
+        try:
+            self.time_minutes = int(request_data.get('time', 30))
+        except (ValueError, TypeError):
+            self.time_minutes = 30
+            
+        self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
         self.search_keywords = request_data.get('search_keywords')
-        self.favorite_artist = request_data.get('favorite_artist')
+        
+        # FIXED: Handle favorite_artist with multiple possible keys
+        self.favorite_artist = (request_data.get('favorite_artist') or 
+                               request_data.get('artist'))
+        
         self.playlist_type = request_data.get('playlist_type', 'clean')
+        
+        # FIXED: Handle birth_year safely
         self.birth_year = request_data.get('birth_year')
+        if self.birth_year:
+            try:
+                self.birth_year = int(self.birth_year)
+            except (ValueError, TypeError):
+                self.birth_year = None
         
         # Initialize components
         self.access_token = None
@@ -121,6 +153,8 @@ class MoodQueEngine:
     def _format_parameters(self):
         """Format parameters for logging"""
         return {
+            'request_id': self.request_id,
+            'user_id': self.user_id,
             'event': self.event_name,
             'genre': self.genre,
             'time': f"{self.time_minutes}min",
@@ -742,13 +776,36 @@ class MoodQueEngine:
 
 
 # Main function to replace build_smart_playlist_enhanced
+# Fixed build_smart_playlist_enhanced function in moodque_engine.py
+
 def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_keywords,
                                   favorite_artist, user_id=None, playlist_type="clean",
                                   request_id=None, birth_year=None):
     """
     Enhanced playlist builder using the new MoodQue Engine
     """
-    # Prepare request data
+    # FIXED: Ensure request_id is always available
+    if not request_id:
+        request_id = str(uuid.uuid4())[:8]
+    
+    # FIXED: Ensure user_id is properly handled
+    if not user_id or user_id == 'unknown':
+        user_id = 'anonymous'
+    
+    # FIXED: Validate and clean parameters
+    if not event_name:
+        event_name = "My MoodQue Playlist"
+    
+    if not genre:
+        genre = "pop"
+    
+    # FIXED: Handle time parameter safely
+    try:
+        time = int(time) if time else 30
+    except (ValueError, TypeError):
+        time = 30
+    
+    # Prepare request data with validated parameters
     request_data = {
         'event_name': event_name,
         'genre': genre,
@@ -762,6 +819,25 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         'birth_year': birth_year
     }
     
+    # ADDED: Log the request data for debugging
+    print(f"[{request_id}] 🔧 Building playlist with parameters:")
+    for key, value in request_data.items():
+        print(f"[{request_id}]   {key}: {value}")
+    
     # Initialize and run engine
-    engine = MoodQueEngine(request_data)
-    return engine.build_playlist()
+    try:
+        engine = MoodQueEngine(request_data)
+        result = engine.build_playlist()
+        
+        if result:
+            print(f"[{request_id}] ✅ Playlist build completed successfully")
+        else:
+            print(f"[{request_id}] ❌ Playlist build failed")
+            
+        return result
+        
+    except Exception as e:
+        print(f"[{request_id}] ❌ Critical error in playlist builder: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
