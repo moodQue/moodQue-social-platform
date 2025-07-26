@@ -105,77 +105,77 @@ GENRE_MAPPING = {
 class MoodQueEngine:
     """Main class for building MoodQue playlists with Spotify integration"""
     
-def __init__(self, request_data):
-    """Initialize with clean request data"""
-    self.request_data = request_data
-    
-    # FIXED: Handle user_id properly with fallbacks
-    self.user_id = (request_data.get('user_id') or 
-                   request_data.get('userId') or 
-                   'anonymous')
-    
-    # CRITICAL: Get request_id but DO NOT generate fallback UUID
-    self.request_id = (request_data.get('request_id') or 
-                      request_data.get('row_id') or 
-                      request_data.get('id') or 
-                      request_data.get('rowID'))
-    
-    # CRITICAL: If no request_id found, raise an error instead of generating UUID
-    if not self.request_id:
-        error_msg = f"❌ CRITICAL: No request_id found in MoodQueEngine initialization"
-        print(error_msg)
-        print(f"📋 Available keys: {list(request_data.keys())}")
-        raise ValueError("request_id is required but not provided")
-    
-    print(f"✅ Using provided request_id: {self.request_id}")
-    
-    self.logger_prefix = f"[{self.request_id}]"
-    
-    # FIXED: Extract and validate parameters with better fallback handling
-    self.event_name = (request_data.get('event_name') or 
-                      request_data.get('event') or 
-                      "Untitled MoodQue Mix")
-    
-    self.genre = request_data.get('genre', 'pop')
-    
-    # FIXED: Handle time parameter conversion safely
-    try:
-        self.time_minutes = int(request_data.get('time', 30))
-    except (ValueError, TypeError):
-        self.time_minutes = 30
+    def __init__(self, request_data):
+        """Initialize with clean request data"""
+        self.request_data = request_data
         
-    self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
-    self.search_keywords = request_data.get('search_keywords')
-    
-    # FIXED: Handle favorite_artist with multiple possible keys
-    self.favorite_artist = (request_data.get('favorite_artist') or 
-                           request_data.get('artist'))
-    
-    self.playlist_type = request_data.get('playlist_type', 'clean')
-    
-    # FIXED: Handle birth_year safely
-    self.birth_year = request_data.get('birth_year')
-    if self.birth_year:
+        # FIXED: Handle user_id properly with fallbacks
+        self.user_id = (request_data.get('user_id') or 
+                       request_data.get('userId') or 
+                       'anonymous')
+        
+        # CRITICAL: Get request_id but DO NOT generate fallback UUID
+        self.request_id = (request_data.get('request_id') or 
+                          request_data.get('row_id') or 
+                          request_data.get('id') or 
+                          request_data.get('rowID'))
+        
+        # CRITICAL: If no request_id found, raise an error instead of generating UUID
+        if not self.request_id:
+            error_msg = f"❌ CRITICAL: No request_id found in MoodQueEngine initialization"
+            print(error_msg)
+            print(f"📋 Available keys: {list(request_data.keys())}")
+            raise ValueError("request_id is required but not provided")
+        
+        print(f"✅ Using provided request_id: {self.request_id}")
+        
+        self.logger_prefix = f"[{self.request_id}]"
+        
+        # FIXED: Extract and validate parameters with better fallback handling
+        self.event_name = (request_data.get('event_name') or 
+                          request_data.get('event') or 
+                          "Untitled MoodQue Mix")
+        
+        self.genre = request_data.get('genre', 'pop')
+        
+        # FIXED: Handle time parameter conversion safely
         try:
-            self.birth_year = int(self.birth_year)
+            self.time_minutes = int(request_data.get('time', 30))
         except (ValueError, TypeError):
-            self.birth_year = None
-    
-    # Initialize components
-    self.access_token = None
-    self.headers = None
-    self.spotify_user_id = None
-    
-    # Results storage
-    self.artist_pool = []
-    self.track_candidates = []
-    self.final_playlist = []
-    
-    # Audio feature parameters for mood matching
-    self.mood_audio_params = self._get_mood_audio_params()
-    
-    print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
-    print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
+            self.time_minutes = 30
+            
+        self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
+        self.search_keywords = request_data.get('search_keywords')
+        
+        # FIXED: Handle favorite_artist with multiple possible keys
+        self.favorite_artist = (request_data.get('favorite_artist') or 
+                               request_data.get('artist'))
+        
+        self.playlist_type = request_data.get('playlist_type', 'clean')
+        
+        # FIXED: Handle birth_year safely
+        self.birth_year = request_data.get('birth_year')
+        if self.birth_year:
+            try:
+                self.birth_year = int(self.birth_year)
+            except (ValueError, TypeError):
+                self.birth_year = None
+        
+        # Initialize components
+        self.access_token = None
+        self.headers = None
+        self.spotify_user_id = None
+        
+        # Results storage
+        self.artist_pool = []
+        self.track_candidates = []
+        self.final_playlist = []
+        
+        # Audio feature parameters for mood matching
+        self.mood_audio_params = self._get_mood_audio_params()
+        
+        print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
+        print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
 
     def _format_parameters(self):
         """Format parameters for logging"""
