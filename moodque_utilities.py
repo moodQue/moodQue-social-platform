@@ -72,7 +72,7 @@ def get_spotify_user_id(headers):
             return None
     except Exception as e:
         print(f"❌ Error getting user ID: {e}")
-        return None
+        return None  
 
 def create_new_playlist(headers, user_id, name, description=""):
     """
@@ -385,3 +385,23 @@ def extract_tracks_from_search(search_response, playlist_type="clean"):
     except Exception as e:
         print(f"❌ Error extracting tracks from search: {e}")
         return tracks
+    
+def fetch_user_playback_data(headers):
+    endpoints = {
+        "top_artists": "https://api.spotify.com/v1/me/top/artists?limit=10&time_range=medium_term",
+        "top_tracks": "https://api.spotify.com/v1/me/top/tracks?limit=10&time_range=medium_term",
+        "recently_played": "https://api.spotify.com/v1/me/player/recently-played?limit=10",
+        "saved_tracks": "https://api.spotify.com/v1/me/tracks?limit=10",
+        "playlists": "https://api.spotify.com/v1/me/playlists?limit=10"
+    }
+
+    data = {}
+    for key, url in endpoints.items():
+        try:
+            r = requests.get(url, headers=headers)
+            if r.status_code == 200:
+                data[key] = r.json()
+        except Exception as e:
+            print(f"❌ Error fetching {key}: {e}")
+    return data
+    

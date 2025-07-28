@@ -105,134 +105,87 @@ app.register_blueprint(auth_bp)
 
 # Updated Spotify callback using your existing environment variable
 
-@app.route('/callback')
+@app.route("/callback", methods=["GET"])
 def spotify_callback():
-    """Spotify OAuth callback that sends data to Glide webhook"""
-    code = request.args.get('code')
-    state = request.args.get('state', '')
-    
+    code = request.args.get("code")
     if not code:
-        return redirect("https://moodque.glide.page?spotify_error=no_code")
+        return "Missing authorization code", 400
 
-    # Parse state to get user info
-    state_params = {}
-    if state:
-        try:
-            for param in state.split("&"):
-                if "=" in param:
-                    key, value = param.split("=", 1)
-                    state_params[key] = urllib.parse.unquote(value)
-        except Exception as e:
-            print(f"Error parsing state: {e}")
-    
-    glide_user_email = state_params.get("user_id", "anonymous")
-    return_url = state_params.get("return_url", "https://moodque.glide.page")
-    
-    print(f"📥 Spotify callback - User: {glide_user_email}")
-
-    # Exchange code for tokens
+    # Step 1: Exchange code for token
     token_url = "https://accounts.spotify.com/api/token"
-    client_id = os.environ.get("SPOTIFY_CLIENT_ID")
-    client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
-    redirect_uri = os.environ.get("SPOTIFY_REDIRECT_URI")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
 
     payload = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
-        "client_id": client_id,
-        "client_secret": client_secret
+        "client_id": os.getenv("SPOTIFY_CLIENT_ID"),
+        "client_secret": os.getenv("SPOTIFY_CLIENT_SECRET")
     }
 
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    token_resp = requests.post(token_url, data=payload, headers=headers)
-
-    if token_resp.status_code != 200:
-        print(f"❌ Token exchange failed: {token_resp.text}")
-        return redirect(f"{return_url}?spotify_error=token_failed")
-
-    token_data = token_resp.json()
-    access_token = token_data['access_token']
-    refresh_token = token_data.get('refresh_token')
-    expires_in = token_data.get('expires_in', 3600)
-
-    # Get Spotify user profile
-    profile_headers = {"Authorization": f"Bearer {access_token}"}
-    profile_resp = requests.get("https://api.spotify.com/v1/me", headers=profile_headers)
-    
-    if profile_resp.status_code != 200:
-        print(f"❌ Profile fetch failed: {profile_resp.text}")
-        return redirect(f"{return_url}?spotify_error=profile_failed")
-
-    user_profile = profile_resp.json()
-    spotify_user_id = user_profile['id']
-    spotify_display_name = user_profile.get('display_name', spotify_user_id)
-    spotify_email = user_profile.get('email', '')
-    
-    print(f"✅ Spotify profile: {spotify_display_name} ({spotify_user_id})")
-
-    # Save to Firebase
     try:
-        db.collection("users").document(spotify_user_id).set({
-            "glide_user_email": glide_user_email,
-            "spotify_user_id": spotify_user_id,
-            "spotify_access_token": access_token,
-            "spotify_refresh_token": refresh_token,
-            "spotify_token_expires_at": str(int(time.time()) + expires_in),
-            "spotify_display_name": spotify_display_name,
-            "spotify_email": spotify_email,
-            "connected_at": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat()
-        }, merge=True)
-        
-        print(f"✅ Saved to Firebase: {glide_user_email} -> {spotify_user_id}")
-        
+        token_resp = requests.post(token_url, data=payload)
+        token_resp.raise_for_status()
+        token_data = token_resp.json()
     except Exception as e:
-        print(f"❌ Firebase save failed: {e}")
-        return redirect(f"{return_url}?spotify_error=database_failed")
+        print(f"❌ Failed to exchange token: {e}")
+        return "Token exchange failed", 500
 
-    # Send data to Glide webhook using existing environment variable
-    webhook_data = {
-        "type": "spotify_connection",
-        "user_email": glide_user_email,
-        "spotify_connected": True,
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+
+    if not access_token:
+        return "No access token received", 500
+
+    # Step 2: Get user profile
+    try:
+        profile_resp = requests.get(
+            "https://api.spotify.com/v1/me",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        profile_resp.raise_for_status()
+        user_profile = profile_resp.json()
+    except Exception as e:
+        print(f"❌ Failed to fetch user profile: {e}")
+        return "Failed to get profile", 500
+
+    spotify_user_id = user_profile.get("id")
+    if not spotify_user_id:
+        return "Missing Spotify user ID", 500
+
+    # Step 3: Get rich playback data
+    from moodque_utilities import fetch_user_playback_data
+    playback_data = fetch_user_playback_data({"Authorization": f"Bearer {access_token}"})
+
+    # Step 4: Save user to Firestore
+    user_doc = {
         "spotify_user_id": spotify_user_id,
-        "spotify_display_name": spotify_display_name,
-        "spotify_email": spotify_email,
+        "spotify_display_name": user_profile.get("display_name"),
+        "spotify_email": user_profile.get("email"),
+        "spotify_birth_year": user_profile.get("birthdate", "")[:4],
+        "spotify_country": user_profile.get("country"),
+        "spotify_product": user_profile.get("product"),
+        "spotify_images": user_profile.get("images", []),
         "connected_at": datetime.now().isoformat(),
-        "status": "connected",  # Changed from "completed" to "connected"
-        "processing_time_seconds": 0,
-        "created_at": datetime.now().isoformat()
+        "spotify_playback_data": playback_data
     }
 
-    # Use your existing environment variable
-    glide_webhook_url = os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
-    
-    if glide_webhook_url:
-        try:
-            webhook_response = requests.post(glide_webhook_url, json=webhook_data, timeout=10)
-            if webhook_response.status_code == 200:
-                print(f"✅ Sent Spotify connection data to Glide webhook successfully")
-            else:
-                print(f"⚠️ Glide webhook response: {webhook_response.status_code}")
-        except Exception as e:
-            print(f"❌ Failed to send to Glide webhook: {e}")
-    else:
-        print("⚠️ GLIDE_RETURN_WEBHOOK_URL not configured")
+    try:
+        db.collection("users").document(spotify_user_id).set(user_doc, merge=True)
+        print(f"✅ Saved Spotify user: {spotify_user_id}")
+    except Exception as e:
+        print(f"❌ Failed to save user to Firebase: {e}")
+        return "Firestore error", 500
 
-    # Redirect back to Glide app with success parameters
-    success_params = {
-        "spotify_connected": "true",
-        "spotify_user_id": spotify_user_id,
-        "spotify_display_name": spotify_display_name,
-        "connection_status": "connected"  # Changed to "connected"
-    }
-    
-    param_string = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in success_params.items()])
-    success_url = f"{return_url}?{param_string}"
-    
-    print(f"🔄 Redirecting to: {success_url}")
-    return redirect(success_url)
+    # Step 5: Save tokens
+    from moodque_utilities import save_user_tokens
+    try:
+        save_user_tokens(spotify_user_id, access_token, refresh_token)
+    except Exception as e:
+        print(f"⚠️ Failed to save tokens: {e}")
+
+    return redirect("https://moodque.glide.page")  # Or your frontend page
+
 
 # Also add a test endpoint that uses the same webhook
 @app.route('/test_spotify_webhook', methods=['POST'])

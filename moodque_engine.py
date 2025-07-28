@@ -361,36 +361,52 @@ class MoodQueEngine:
         self.artist_pool = list(set(target_artists + similar_artists))
         print(f"{self.logger_prefix} 👥 Artist pool: {len(self.artist_pool)} unique artists")
         return self.artist_pool
-
+    
     def select_tracks_with_logic(self, era_weights):
         """Use ML logic and user parameters to select optimal tracks"""
         print(f"{self.logger_prefix} 🧠 Selecting tracks with intelligent logic...")
-        
-        # Get track recommendations from Last.fm
+
+        seed_artists = self.artist_pool[:3]
+        similar_artists = list(set(self.artist_pool) - set(seed_artists))
+
         try:
-            lastfm_tracks = get_recommendations(
-                seed_artists=self.artist_pool[:5],  # Use top 5 artists
+            seed_tracks = get_recommendations(
+                seed_artists=seed_artists,
                 genre=self.genre,
                 birth_year=self.birth_year,
                 era_weights=era_weights,
-                limit=self.time_minutes * 3  # Get 3x target for filtering
+                limit=int(self.time_minutes * 3 * 0.65)
             )
-            print(f"{self.logger_prefix} 🎼 Last.fm returned {len(lastfm_tracks)} track recommendations")
+
+            similar_tracks = get_recommendations(
+                seed_artists=similar_artists,
+                genre=self.genre,
+                birth_year=self.birth_year,
+                era_weights=era_weights,
+                limit=int(self.time_minutes * 3 * 0.35)
+            )
+
+            lastfm_tracks = seed_tracks + similar_tracks
+            print(f"{self.logger_prefix} 🎼 Last.fm returned {len(lastfm_tracks)} track recommendations (seed={len(seed_tracks)}, similar={len(similar_tracks)})")
+
         except Exception as e:
             print(f"{self.logger_prefix} ❌ Last.fm track selection failed: {e}")
             lastfm_tracks = []
-        
+
         # Apply user-specific filtering
-        filtered_candidates = self._apply_user_filters(lastfm_tracks)
-        
+            filtered_candidates = self._apply_user_filters(lastfm_tracks)
+
         # Apply mood-based scoring
-        mood_scored_tracks = self._apply_mood_scoring(filtered_candidates)
-        
+            mood_scored_tracks = self._apply_mood_scoring(filtered_candidates)
+
         # Apply time-based selection
-        self.track_candidates = self._select_by_duration(mood_scored_tracks)
-        
-        print(f"{self.logger_prefix} ✅ Selected {len(self.track_candidates)} track candidates")
-        return self.track_candidates
+            self.track_candidates = self._select_by_duration(mood_scored_tracks)
+
+            print(f"{self.logger_prefix} ✅ Selected {len(self.track_candidates)} track candidates")
+
+            return self.track_candidates
+
+
 
     def _apply_user_filters(self, tracks):
         """Apply user-specific filters based on preferences"""
@@ -867,4 +883,5 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         print(f"[{request_id}] ❌ Critical error in playlist builder: {e}")
         import traceback
         traceback.print_exc()
+        
         return None
