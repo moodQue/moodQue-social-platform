@@ -181,40 +181,46 @@ def get_tracks_with_duration(track_uris, headers):
         return []
 
 def search_spotify_track(artist, title, headers):
-    """Search for a specific track by artist and title"""
-    try:
-        if not artist or not title or not headers:
-            return None
-        
-        query = f"track:\"{title}\" artist:\"{artist}\""
-        url = "https://api.spotify.com/v1/search"
-        params = {"q": query, "type": "track", "limit": 1, "market": "US"}
-        res = requests.get(url, headers=headers, params=params)
-        
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, dict):
-                tracks_data = data.get("tracks", {})
-                if isinstance(tracks_data, dict):
-                    tracks = tracks_data.get("items", [])
-                    if tracks:
-                        return tracks[0]["uri"]
-        
-        # Fallback: try without quotes
-        query_fallback = f"track:{title} artist:{artist}"
-        params["q"] = query_fallback
-        res = requests.get(url, headers=headers, params=params)
-        
-        if res.status_code == 200:
-            data = res.json()
-            tracks = data.get("tracks", {}).get("items", [])
-            if tracks:
-                return tracks[0]["uri"]
-        
+    """Search for a track on Spotify by artist and title with fuzzy tolerance"""
+    import re
+
+    def clean_text(text):
+        # Remove content inside parentheses or brackets, normalize
+        text = re.sub(r"\(.*?\)|\[.*?\]", "", text)
+        text = text.replace("feat.", "").replace("featuring", "")
+        return text.strip().lower()
+
+    if not artist or not title or not headers:
         return None
-    except Exception as e:
-        print(f"❌ Error searching track '{artist} - {title}': {e}")
-        return None
+
+    cleaned_title = clean_text(title)
+    cleaned_artist = clean_text(artist)
+
+    base_queries = [
+        f'track:"{title}" artist:"{artist}"',
+        f'{title} {artist}',
+        f'track:{title} artist:{artist}',
+        f'{artist} {title}'
+    ]
+
+    for query in base_queries:
+        try:
+            params = {"q": query, "type": "track", "limit": 3, "market": "US"}
+            res = requests.get("https://api.spotify.com/v1/search", headers=headers, params=params)
+
+            if res.status_code == 200:
+                data = res.json()
+                tracks = data.get("tracks", {}).get("items", [])
+                for track in tracks:
+                    t_name = clean_text(track.get("name", ""))
+                    t_artist = clean_text(track.get("artists", [{}])[0].get("name", ""))
+                    if cleaned_title in t_name and cleaned_artist in t_artist:
+                        return track["uri"]
+        except Exception as e:
+            print(f"❌ Error searching query '{query}': {e}")
+
+    print(f"❌ No match for '{title}' by '{artist}' after multiple attempts")
+    return None
 
 def get_valid_access_token(user_id=None):
     """
