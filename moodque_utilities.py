@@ -411,3 +411,31 @@ def fetch_user_playback_data(headers):
             print(f"❌ Error fetching {key}: {e}")
     return data
     
+def bulk_search_spotify_tracks(track_list, headers):
+    """
+    Try to find matching Spotify URIs for a list of Last.fm tracks.
+    Each track should be a dict with 'artist' and 'track' keys.
+    """
+    from moodque_utilities import search_spotify_track
+
+    matches = []
+    not_found = []
+
+    for track in track_list:
+        artist = track.get("artist")
+        title = track.get("track")
+
+        if not artist or not title:
+            continue
+
+        uri = search_spotify_track(artist, title, headers)
+
+        if uri:
+            track["spotify_uri"] = uri
+            matches.append(track)
+        else:
+            not_found.append(track)
+
+    print(f"🔎 Bulk search complete: {len(matches)} found, {len(not_found)} not found")
+    return matches
+   

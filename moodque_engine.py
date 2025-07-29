@@ -489,54 +489,18 @@ class MoodQueEngine:
         return selected
 
     def find_spotify_tracks(self):
-        """Search for tracks on Spotify and validate availability"""
-        print(f"{self.logger_prefix} 🔍 Finding tracks on Spotify...")
-        
-        spotify_tracks = []
-        not_found_count = 0
-        
-        for track_data in self.track_candidates:
-            try:
-                artist = track_data.get('artist', '')
-                track_name = track_data.get('track', '')
-                
-                if not artist or not track_name:
-                    continue
-                
-                # Search for track on Spotify
-                spotify_uri = search_spotify_track(artist, track_name, self.headers)
-                
-                if spotify_uri:
-                    # Get full track details
-                    track_details = self._get_spotify_track_details(spotify_uri)
-                    if track_details:
-                        # Apply explicit content filter
-                        if self._passes_content_filter(track_details):
-                            # Apply quality filter
-                            if self._passes_quality_filter(track_details):
-                                track_data['spotify_uri'] = spotify_uri
-                                track_data['spotify_details'] = track_details
-                                spotify_tracks.append(track_data)
-                            else:
-                                print(f"{self.logger_prefix} 🚫 Quality filtered: {artist} - {track_name}")
-                        else:
-                            print(f"{self.logger_prefix} 🚫 Content filtered: {artist} - {track_name}")
-                    else:
-                        not_found_count += 1
-                else:
-                    not_found_count += 1
-                    
-            except Exception as e:
-                print(f"{self.logger_prefix} ⚠️ Error searching for track: {e}")
-                not_found_count += 1
-        
-        # If we have too few tracks, use fallback search
+        """Search all Last.fm tracks on Spotify first before fallback"""
+        from moodque_utilities import bulk_search_spotify_tracks
+
+        print(f"{self.logger_prefix} 🔍 Running bulk Spotify track match...")
+
+        spotify_tracks = bulk_search_spotify_tracks(self.track_candidates, self.headers)
+
         if len(spotify_tracks) < 5:
-            print(f"{self.logger_prefix} ⚠️ Too few tracks found ({len(spotify_tracks)}), using fallback search...")
-            fallback_tracks = self._fallback_spotify_search()
-            spotify_tracks.extend(fallback_tracks)
-        
-        print(f"{self.logger_prefix} ✅ Spotify search complete: {len(spotify_tracks)} found, {not_found_count} not found")
+         print(f"{self.logger_prefix} ⚠️ Too few matched ({len(spotify_tracks)}), using fallback...")
+        spotify_tracks.extend(self._fallback_spotify_search())
+
+        print(f"{self.logger_prefix} ✅ Spotify track search complete: {len(spotify_tracks)} final")
         self.final_playlist = self._optimize_playlist_order(spotify_tracks)
         return self.final_playlist
 
