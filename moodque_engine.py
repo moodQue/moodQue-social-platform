@@ -12,7 +12,8 @@ def get_user_id_from_spotify_id(spotify_user_id):
 
     return None
 
-from lastfm_recommender import get_recommendations, get_similar_artists, get_genre_seed_artists
+from lastfm_recommender import get_recommendations, get_similar_artists, get_similar_tracks, search_tracks_by_artist, get_genre_seed_artists
+
 import os
 import requests
 import base64
@@ -175,7 +176,8 @@ class MoodQueEngine:
         artists = [a.strip() for a in self.request_data['favorite_artist'].split(",")]
 
         for artist in artists:
-            results = self.lastfm.search_tracks_by_artist(artist)
+            results = search_tracks_by_artist(artist)
+
             if results:
                 similar_tracks.extend(results)
     
