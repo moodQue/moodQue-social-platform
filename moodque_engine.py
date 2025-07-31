@@ -167,11 +167,28 @@ class MoodQueEngine:
 
         return found_ids
     
+    
         # Stub for discovering similar tracks (to be expanded)
-    def discover_similar_tracks(self, favorite_artist, mood_tags, genre, keywords):
-        print(f"[{self.request_id}] 🔍 Discovering similar tracks...")
-    # Placeholder behavior
-        return []  # Replace with real discovery logic later
+    def discover_similar_tracks(self):
+        similar_tracks = []
+        artists = [a.strip() for a in self.request_data['favorite_artist'].split(",")]
+
+        for artist in artists:
+            results = self.lastfm.search_tracks_by_artist(artist)
+            if results:
+                similar_tracks.extend(results)
+    
+        # Remove duplicates
+        seen = set()
+        deduped = []
+        for track in similar_tracks:
+            key = (track['name'].lower(), track['artist'].lower())
+            if key not in seen:
+                deduped.append(track)
+                seen.add(key)
+
+        return deduped[:300]
+
 
         # Stub for creating the Spotify playlist (to be expanded)
     def create_spotify_playlist(self, track_ids):
