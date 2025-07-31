@@ -170,6 +170,7 @@ class MoodQueEngine:
     
         # Stub for discovering similar tracks (to be expanded)
     def discover_similar_tracks(self):
+        print(f"[{self.request_data['request_id']}] 🔍 Searching Last.fm for: {artist}")
         similar_tracks = []
         artists = [a.strip() for a in self.request_data['favorite_artist'].split(",")]
 
@@ -188,6 +189,8 @@ class MoodQueEngine:
                 seen.add(key)
 
         return deduped[:300]
+        
+    
 
 
         # Stub for creating the Spotify playlist (to be expanded)
