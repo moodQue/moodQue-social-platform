@@ -169,8 +169,8 @@ class MoodQueEngine:
     
     
         # Stub for discovering similar tracks (to be expanded)
-    def discover_similar_tracks(self):
-        print(f"[{self.request_data['request_id']}] 🔍 Searching Last.fm for: {artist}")
+    def discover_similar_tracks(self, favorite_artist=None, mood_tags=None, genre=None, keywords=None):
+        print(f"[{self.request_data['request_id']}] 🔍 Searching Last.fm for: {favorite_artist}")
         similar_tracks = []
         artists = [a.strip() for a in self.request_data['favorite_artist'].split(",")]
 
