@@ -106,76 +106,81 @@ class MoodQueEngine:
     """Main class for building MoodQue playlists with Spotify integration"""
     
     def __init__(self, request_data):
-        """Initialize with clean request data"""
+        """
+        Initialize the MoodQueEngine with request data and setup cache
+        """
         self.request_data = request_data
-        
-        # FIXED: Handle user_id properly with fallbacks
-        self.user_id = (request_data.get('user_id') or 
-                       request_data.get('userId') or 
-                       'anonymous')
-        
-        # CRITICAL: Get request_id but DO NOT generate fallback UUID
-        self.request_id = (request_data.get('request_id') or 
-                          request_data.get('row_id') or 
-                          request_data.get('id') or 
-                          request_data.get('rowID'))
-        
-        # CRITICAL: If no request_id found, raise an error instead of generating UUID
-        if not self.request_id:
-            error_msg = f"❌ CRITICAL: No request_id found in MoodQueEngine initialization"
-            print(error_msg)
-            print(f"📋 Available keys: {list(request_data.keys())}")
-            raise ValueError("request_id is required but not provided")
-        
-        print(f"✅ Using provided request_id: {self.request_id}")
-        
-        self.logger_prefix = f"[{self.request_id}]"
-        
-        # FIXED: Extract and validate parameters with better fallback handling
-        self.event_name = (request_data.get('event_name') or 
-                          request_data.get('event') or 
-                          "Untitled MoodQue Mix")
-        
         self.genre = request_data.get('genre', 'pop')
-        
-        # FIXED: Handle time parameter conversion safely
-        try:
-            self.time_minutes = int(request_data.get('time', 30))
-        except (ValueError, TypeError):
-            self.time_minutes = 30
-            
-        self.mood_tags = request_data.get('mood_tags') or request_data.get('mood')
-        self.search_keywords = request_data.get('search_keywords')
-        
-        # FIXED: Handle favorite_artist with multiple possible keys
-        self.favorite_artist = (request_data.get('favorite_artist') or 
-                               request_data.get('artist'))
-        
+        self.favorite_artist = request_data.get('favorite_artist', '')
+        self.time = int(request_data.get('time', 30))
+        self.user_id = request_data.get('user_id', 'anonymous')
+        self.mood_tags = request_data.get('mood_tags', [])
+        self.search_keywords = request_data.get('search_keywords', [])
+        self.event_name = request_data.get('event_name', 'MoodQue Playlist')
         self.playlist_type = request_data.get('playlist_type', 'clean')
-        
-        # FIXED: Handle birth_year safely
-        self.birth_year = request_data.get('birth_year')
-        if self.birth_year:
-            try:
-                self.birth_year = int(self.birth_year)
-            except (ValueError, TypeError):
-                self.birth_year = None
-        
-        # Initialize components
-        self.access_token = None
-        self.headers = None
-        self.spotify_user_id = None
-        
-        # Results storage
-        self.artist_pool = []
-        self.track_candidates = []
-        self.final_playlist = []
-        
-        # Audio feature parameters for mood matching
-        self.mood_audio_params = self._get_mood_audio_params()
-        
-        print(f"{self.logger_prefix} 🚀 MoodQue Engine Initialized")
-        print(f"{self.logger_prefix} 📋 Parameters: {self._format_parameters()}")
+        self.birth_year = request_data.get('birth_year', None)
+        self.request_id = request_data.get('request_id', 'unknown')
+        self.request_data = request_data
+        self.track_cache = {}  # For caching track IDs
+
+        # Token assumed to be loaded from env elsewhere in your project
+        self.spotify_token = os.getenv("SPOTIFY_ACCESS_TOKEN")
+
+        # Caching setup
+        self.track_cache = {}  # Format: { (artist_name.lower(), track_name.lower()): track_id }
+    def fetch_spotify_track_ids(self, track_list, max_results=300):
+        found_ids = []  # Initialize result list
+
+        for artist, track in track_list:
+            if len(found_ids) >= max_results:
+                break
+
+            cache_key = f"{artist.lower()}_{track.lower()}"
+
+            if cache_key in self.track_cache:
+                found_ids.append(self.track_cache[cache_key])
+            continue  # Skip re-querying if in cache
+
+        # Construct Spotify Search API query
+        query = f"{track} artist:{artist}"
+        url = "https://api.spotify.com/v1/search"
+        params = {
+            "q": query,
+            "type": "track",
+            "limit": 1
+        }
+        headers = {
+            "Authorization": f"Bearer {self.request_data['spotify_access_token']}"
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("tracks", {}).get("items", [])
+            if items:
+                track_id = items[0]["id"]
+                found_ids.append(track_id)
+                self.track_cache[cache_key] = track_id
+        else:
+            print(f"Spotify search failed for: {query} — Status: {response.status_code}")
+
+        return found_ids
+    
+        # Stub for discovering similar tracks (to be expanded)
+    def discover_similar_tracks(self, favorite_artist, mood_tags, genre, keywords):
+        print(f"[{self.request_id}] 🔍 Discovering similar tracks...")
+    # Placeholder behavior
+        return []  # Replace with real discovery logic later
+
+        # Stub for creating the Spotify playlist (to be expanded)
+    def create_spotify_playlist(self, track_ids):
+        print(f"[{self.request_id}] 🧰 Creating Spotify playlist with {len(track_ids)} tracks... (Stub logic)")
+        return {
+        'playlist_url': 'https://open.spotify.com/playlist/mock-id',
+        'track_count': len(track_ids)
+        }
+
 
     def _format_parameters(self):
         """Format parameters for logging"""
@@ -745,41 +750,44 @@ class MoodQueEngine:
             return None
 
     def build_playlist(self):
-        """Main method to build the complete playlist"""
-        print(f"{self.logger_prefix} 🚀 Starting playlist build process...")
-        
-        try:
-            # Step 1: Authenticate
-            if not self.authenticate_spotify():
-                print(f"{self.logger_prefix} ❌ Authentication failed")
-                return None
-            
-            # Step 2: Analyze preferences
-            era_weights = self.analyze_era_preferences()
-            
-            # Step 3: Discover artists
-            self.discover_artists_lastfm(era_weights)
-            
-            # Step 4: Select tracks with logic
-            self.select_tracks_with_logic(era_weights)
-            
-            # Step 5: Find tracks on Spotify
-            self.find_spotify_tracks()
-            
-            # Step 6: Create playlist
-            playlist_url = self.create_spotify_playlist()
-            
-            if playlist_url:
-                print(f"{self.logger_prefix} 🎉 Playlist build complete!")
-                return playlist_url
-            else:
-                print(f"{self.logger_prefix} ❌ Playlist build failed")
-                return None
-                
-        except Exception as e:
-            print(f"{self.logger_prefix} ❌ Critical error in playlist build: {e}")
-            traceback.print_exc()
+        print(f"[{self.request_id}] 🚀 Starting playlist build process...")
+
+        # Step 1: Discover similar tracks via Last.fm
+        similar_tracks = self.discover_similar_tracks(
+            favorite_artist=self.favorite_artist,
+            mood_tags=self.mood_tags,
+            genre=self.genre,
+            keywords=self.search_keywords
+        )
+
+        if not similar_tracks:
+            print(f"[{self.request_id}] ❌ No similar tracks found from Last.fm")
             return None
+
+        print(f"[{self.request_id}] 🎯 Found {len(similar_tracks)} candidate tracks")
+
+        # Step 2: Fetch Spotify track IDs using bulk search
+        spotify_track_ids = self.fetch_spotify_track_ids(similar_tracks)
+        if not spotify_track_ids:
+            print(f"[{self.request_id}] ❌ No valid Spotify track IDs matched")
+            return None
+
+        print(f"[{self.request_id}] 🎵 Matched {len(spotify_track_ids)} Spotify tracks")
+
+        # Step 3: Create Spotify playlist
+        playlist_info = self.create_spotify_playlist(spotify_track_ids)
+        if not playlist_info:
+            print(f"[{self.request_id}] ❌ Failed to create playlist")
+            return None
+
+        print(f"[{self.request_id}] ✅ Playlist created: {playlist_info['playlist_url']}")
+
+        return {
+            "playlist_url": playlist_info["playlist_url"],
+            "num_tracks": playlist_info["track_count"],
+            "event": self.request_data.get("event_name")
+        }
+
 
 
 # Main function to replace build_smart_playlist_enhanced

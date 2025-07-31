@@ -438,4 +438,21 @@ def bulk_search_spotify_tracks(track_list, headers):
 
     print(f"🔎 Bulk search complete: {len(matches)} found, {len(not_found)} not found")
     return matches
+
+def find_spotify_track_id(track_name, artist_name, access_token):
+    query = f"track:{track_name} artist:{artist_name}"
+    url = "https://api.spotify.com/v1/search"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"q": query, "type": "track", "limit": 1, "market": "US"}
+
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        results = response.json()
+        items = results.get("tracks", {}).get("items", [])
+        if items:
+            return items[0]["id"]
+    return None
+
+
+
    
