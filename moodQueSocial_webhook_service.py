@@ -810,3 +810,130 @@ def test_engine_directly():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+        
+# Add this to your moodQueSocial_webhook_service.py file
+
+@app.route('/disconnect_spotify', methods=['POST', 'GET'])
+def disconnect_spotify():
+    """Disconnect user's Spotify account"""
+    try:
+        # Get user info from request
+        if request.method == 'POST':
+            data = request.get_json()
+            user_email = data.get('user_email') or data.get('email')
+            return_url = data.get('return_url', 'https://moodque.glide.page')
+        else:
+            # GET request with query parameters
+            user_email = request.args.get('user_email') or request.args.get('email')
+            return_url = request.args.get('return_url', 'https://moodque.glide.page')
+        
+        if not user_email:
+            return jsonify({"error": "No user email provided"}), 400
+        
+        # Find and remove user's Spotify connection from Firebase
+        users_ref = db.collection("users")
+        
+        # Search by email
+        query = users_ref.where("spotify_email", "==", user_email).limit(1)
+        docs = list(query.stream())
+        
+        if not docs:
+            # Try searching by glide_user_email
+            query = users_ref.where("glide_user_email", "==", user_email).limit(1) 
+            docs = list(query.stream())
+        
+        if docs:
+            # Remove Spotify connection data
+            user_doc = docs[0]
+            user_doc.reference.update({
+                "spotify_access_token": None,
+                "spotify_refresh_token": None,
+                "spotify_user_id": None,
+                "spotify_display_name": None,
+                "spotify_email": None,
+                "spotify_connected": False,
+                "disconnected_at": datetime.now().isoformat()
+            })
+            
+            logger.info(f"✅ Disconnected Spotify for user: {user_email}")
+            
+            if request.method == 'GET':
+                # Redirect back to app with success
+                success_url = f"{return_url}?spotify_disconnected=true&status=success"
+                return redirect(success_url)
+            else:
+                # JSON response for POST
+                return jsonify({
+                    "status": "success",
+                    "message": "Spotify account disconnected successfully",
+                    "spotify_connected": False,
+                    "disconnected_at": datetime.now().isoformat()
+                })
+        else:
+            logger.warning(f"⚠️ No Spotify connection found for user: {user_email}")
+            
+            if request.method == 'GET':
+                error_url = f"{return_url}?spotify_error=not_connected"
+                return redirect(error_url)
+            else:
+                return jsonify({
+                    "status": "error", 
+                    "message": "No Spotify connection found for this user"
+                }), 404
+                
+    except Exception as e:
+        logger.error(f"❌ Error disconnecting Spotify: {e}")
+        
+        if request.method == 'GET':
+            error_url = f"{return_url}?spotify_error=disconnect_failed"
+            return redirect(error_url)
+        else:
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to disconnect Spotify: {str(e)}"
+            }), 500
+
+@app.route('/spotify_status', methods=['POST'])
+def get_spotify_status():
+    """Get current Spotify connection status for a user"""
+    try:
+        data = request.get_json()
+        user_email = data.get('user_email') or data.get('email')
+        
+        if not user_email:
+            return jsonify({"spotify_connected": False, "error": "No email provided"}), 400
+        
+        # Search Firebase for user's Spotify connection
+        users_ref = db.collection("users")
+        query = users_ref.where("spotify_email", "==", user_email).limit(1)
+        docs = list(query.stream())
+        
+        if not docs:
+            # Try searching by glide_user_email
+            query = users_ref.where("glide_user_email", "==", user_email).limit(1)
+            docs = list(query.stream())
+        
+        if docs:
+            user_data = docs[0].to_dict()
+            return jsonify({
+                "spotify_connected": bool(user_data.get("spotify_refresh_token")),
+                "spotify_user_id": user_data.get("spotify_user_id", ""),
+                "spotify_display_name": user_data.get("spotify_display_name", ""),
+                "connected_at": user_data.get("connected_at", ""),
+                "status": "found"
+            })
+        else:
+            return jsonify({
+                "spotify_connected": False,
+                "spotify_user_id": "",
+                "spotify_display_name": "",
+                "connected_at": "",
+                "status": "not_found"
+            })
+            
+    except Exception as e:
+        logger.error(f"❌ Error checking Spotify status: {e}")
+        return jsonify({
+            "spotify_connected": False,
+            "error": str(e)
+        }), 500        
