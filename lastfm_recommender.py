@@ -53,7 +53,13 @@ ARTIST_ERA_MAP = {
     "Olivia Rodrigo": ["2020s"],
     "Harry Styles": ["2010s", "2020s"],
     "Kendrick Lamar": ["2010s", "2020s"],
-    "Travis Scott": ["2010s", "2020s"]
+    "Travis Scott": ["2010s", "2020s"],
+    "Miles Davis": ["1940s", "1950s", "1960s", "1970s", "1980s"],
+    "John Coltrane": ["1950s", "1960s"],
+    "Bill Evans": ["1950s", "1960s", "1970s"],
+    "Herbie Hancock": ["1960s", "1970s", "1980s", "1990s"],
+    "Diana Krall": ["1990s", "2000s", "2010s"],
+    "Norah Jones": ["2000s", "2010s", "2020s"]
 }
 
 # Genre-to-artist seed mapping for when no favorite artist is provided
@@ -65,7 +71,7 @@ GENRE_ARTIST_SEEDS = {
     "r-n-b": ["Usher", "John Legend", "Maxwell", "Sade"],
     "electronic": ["Marshmello", "Calvin Harris", "The Chainsmokers"],
     "country": ["Taylor Swift", "Keith Urban", "Miranda Lambert"],
-    "jazz": ["Frank Sinatra", "Norah Jones", "Diana Krall"],
+    "jazz": ["Miles Davis", "John Coltrane", "Diana Krall", "Norah Jones"],
     "classical": ["Ludovico Einaudi", "Max Richter", "Ólafur Arnalds"],
     "funk": ["Prince", "Pharrell", "Bruno Mars"],
     "soul": ["Stevie Wonder", "Adele", "John Legend"],
@@ -76,6 +82,172 @@ GENRE_ARTIST_SEEDS = {
     "metal": ["Metallica", "Iron Maiden", "Black Sabbath"],
     "grunge": ["Nirvana", "Pearl Jam", "Soundgarden"]
 }
+
+def search_tracks_by_artist(artist_name, limit=50):
+    """
+    Get tracks for a specific artist from Last.fm - this is the missing function!
+    This function can return 300+ tracks for popular artists by combining:
+    1. Top tracks
+    2. Album tracks 
+    3. Similar artists' tracks
+    """
+    print(f"🎤 Searching for tracks by artist: '{artist_name}' (limit: {limit})")
+    
+    if not LASTFM_API_KEY:
+        print("❌ LASTFM_API_KEY not found in environment variables")
+        return []
+    
+    all_tracks = []
+    
+    # Strategy 1: Get artist's top tracks (up to 50)
+    try:
+        top_tracks = get_lastfm_top_tracks(artist_name, limit=min(limit, 50))
+        all_tracks.extend(top_tracks)
+        print(f"🎵 Found {len(top_tracks)} top tracks for {artist_name}")
+    except Exception as e:
+        print(f"❌ Error getting top tracks for {artist_name}: {e}")
+    
+    # Strategy 2: Get tracks from artist's albums (if we need more tracks)
+    if len(all_tracks) < limit:
+        try:
+            album_tracks = get_artist_album_tracks(artist_name, limit=limit - len(all_tracks))
+            # Remove duplicates
+            for track in album_tracks:
+                if track not in all_tracks:
+                    all_tracks.append(track)
+            print(f"🎵 Added {len(album_tracks)} album tracks for {artist_name}")
+        except Exception as e:
+            print(f"❌ Error getting album tracks for {artist_name}: {e}")
+    
+    # Strategy 3: Get tracks from similar artists (if we still need more)
+    if len(all_tracks) < limit:
+        try:
+            similar_artists = get_lastfm_similar_artists(artist_name, limit=3)
+            for similar_artist in similar_artists:
+                if len(all_tracks) >= limit:
+                    break
+                similar_tracks = get_lastfm_top_tracks(similar_artist, limit=5)
+                for track in similar_tracks:
+                    if len(all_tracks) >= limit:
+                        break
+                    if track not in all_tracks:
+                        all_tracks.append(track)
+            print(f"🔗 Added tracks from similar artists to {artist_name}")
+        except Exception as e:
+            print(f"❌ Error getting similar artist tracks for {artist_name}: {e}")
+    
+    # Convert tuples to dict format expected by the engine
+    formatted_tracks = []
+    for track_tuple in all_tracks:
+        if isinstance(track_tuple, tuple) and len(track_tuple) >= 2:
+            formatted_tracks.append({
+                "track": track_tuple[0],
+                "artist": track_tuple[1],
+                "score": 0.8,  # High score for artist's own tracks
+                "source": "artist_search"
+            })
+    
+    print(f"✅ Total tracks found for {artist_name}: {len(formatted_tracks)}")
+    return formatted_tracks[:limit]
+
+def get_artist_album_tracks(artist_name, limit=30):
+    """Get tracks from an artist's albums using Last.fm API"""
+    if not LASTFM_API_KEY:
+        return []
+    
+    print(f"💿 Getting album tracks for: '{artist_name}'")
+    
+    try:
+        # First get the artist's top albums
+        url = "https://ws.audioscrobbler.com/2.0/"
+        params = {
+            "method": "artist.gettopalbums",
+            "artist": artist_name.strip(),
+            "api_key": LASTFM_API_KEY,
+            "format": "json",
+            "limit": 10  # Get top 10 albums
+        }
+        
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code != 200:
+            print(f"❌ Failed to get albums for {artist_name}: {res.status_code}")
+            return []
+        
+        data = res.json()
+        if "error" in data:
+            print(f"❌ Last.fm API Error: {data.get('message', 'Unknown error')}")
+            return []
+        
+        albums = data.get("topalbums", {}).get("album", [])
+        if not isinstance(albums, list):
+            albums = [albums] if albums else []
+        
+        all_album_tracks = []
+        
+        # Get tracks from each album
+        for album in albums[:5]:  # Limit to top 5 albums to avoid too many API calls
+            if len(all_album_tracks) >= limit:
+                break
+                
+            album_name = album.get("name", "")
+            if not album_name:
+                continue
+                
+            try:
+                album_tracks = get_album_tracks(artist_name, album_name)
+                all_album_tracks.extend(album_tracks)
+                if len(all_album_tracks) >= limit:
+                    break
+            except Exception as e:
+                print(f"❌ Error getting tracks from album '{album_name}': {e}")
+                continue
+        
+        print(f"💿 Found {len(all_album_tracks)} album tracks for {artist_name}")
+        return all_album_tracks[:limit]
+        
+    except Exception as e:
+        print(f"❌ Error getting album tracks for {artist_name}: {e}")
+        return []
+
+def get_album_tracks(artist_name, album_name, limit=20):
+    """Get tracks from a specific album"""
+    if not LASTFM_API_KEY:
+        return []
+    
+    try:
+        url = "https://ws.audioscrobbler.com/2.0/"
+        params = {
+            "method": "album.getinfo",
+            "artist": artist_name.strip(),
+            "album": album_name.strip(),
+            "api_key": LASTFM_API_KEY,
+            "format": "json"
+        }
+        
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code != 200:
+            return []
+        
+        data = res.json()
+        if "error" in data:
+            return []
+        
+        album_info = data.get("album", {})
+        tracks = album_info.get("tracks", {}).get("track", [])
+        
+        if not isinstance(tracks, list):
+            tracks = [tracks] if tracks else []
+        
+        track_tuples = []
+        for track in tracks[:limit]:
+            if isinstance(track, dict) and "name" in track:
+                track_tuples.append((track["name"], artist_name))
+        
+        return track_tuples
+        
+    except Exception as e:
+        print(f"❌ Error getting album info for '{album_name}': {e}")
+        return []
 
 def find_era_overlap(seed_artists: List[str]) -> Dict[str, float]:
     """
@@ -444,3 +616,26 @@ def get_lastfm_track_info(artist: str, track: str) -> Optional[Dict]:
         print(f"❌ Error getting track info: {e}")
     
     return None
+
+def test_lastfm_connection():
+    """Test function to verify Last.fm API is working"""
+    print("🧪 Testing Last.fm API connection...")
+    
+    if not LASTFM_API_KEY:
+        print("❌ No LASTFM_API_KEY found!")
+        return False
+    
+    # Test with a very simple, guaranteed artist
+    test_artists = ["Beatles", "Taylor Swift", "Drake"]
+    
+    for artist in test_artists:
+        print(f"\n🎯 Testing with: {artist}")
+        similar = get_similar_artists(artist, limit=2)
+        if similar:
+            print(f"✅ Success! Found similar artists: {similar}")
+            return True
+        else:
+            print(f"❌ Failed for {artist}")
+    
+    print("❌ All Last.fm tests failed!")
+    return False
