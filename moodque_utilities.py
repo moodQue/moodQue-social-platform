@@ -180,8 +180,8 @@ def get_tracks_with_duration(track_uris, headers):
         print(f"❌ Error getting track durations: {e}")
         return []
 
-def search_spotify_track(artist, title, headers):
-    """Search for a track on Spotify by artist and title with fuzzy tolerance"""
+def search_spotify_track(artist, title, headers, playlist_type="clean"):
+    """Search for a track on Spotify by artist and title with content filtering"""
     import re
 
     def clean_text(text):
@@ -205,21 +205,41 @@ def search_spotify_track(artist, title, headers):
 
     for query in base_queries:
         try:
-            params = {"q": query, "type": "track", "limit": 3, "market": "US"}
+            params = {"q": query, "type": "track", "limit": 10, "market": "US"}  # Get more results to filter
             res = requests.get("https://api.spotify.com/v1/search", headers=headers, params=params)
 
             if res.status_code == 200:
                 data = res.json()
                 tracks = data.get("tracks", {}).get("items", [])
+                
                 for track in tracks:
+                    # Check if track matches our search criteria
                     t_name = clean_text(track.get("name", ""))
                     t_artist = clean_text(track.get("artists", [{}])[0].get("name", ""))
+                    is_explicit = track.get("explicit", False)
+                    
+                    # Verify this is the right track
                     if cleaned_title in t_name and cleaned_artist in t_artist:
+                        # Apply content filter
+                        if playlist_type.lower() == "clean" and is_explicit:
+                            print(f"⚠️ Skipping explicit track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
+                            continue  # Skip explicit tracks for clean playlists
+                        elif playlist_type.lower() == "explicit" and not is_explicit:
+                            print(f"⚠️ Skipping clean track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
+                            continue  # Skip clean tracks for explicit playlists
+                        
+                        # Found a matching track that passes content filter
+                        content_type = "explicit" if is_explicit else "clean"
+                        print(f"✅ Found {content_type} track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
                         return track["uri"]
+                        
         except Exception as e:
             print(f"❌ Error searching query '{query}': {e}")
 
-    print(f"❌ No match for '{title}' by '{artist}' after multiple attempts")
+    print(f"❌ No {playlist_type} match for '{title}' by '{artist}' after multiple attempts")
+    return None
+
+    print(f"❌ No {playlist_type} match for '{title}' by '{artist}' after multiple attempts")
     return None
 
 def get_valid_access_token(user_id=None):
@@ -452,7 +472,3 @@ def find_spotify_track_id(track_name, artist_name, access_token):
         if items:
             return items[0]["id"]
     return None
-
-
-
-   

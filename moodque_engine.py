@@ -141,33 +141,48 @@ class MoodQueEngine:
 
     def discover_similar_tracks(self, favorite_artist=None, mood_tags=None, genre=None, keywords=None):
         """
-        FIXED: Use the existing get_recommendations function instead of the non-existent search_tracks_by_artist
+        Use search_tracks_by_artist to get many tracks from favorite artists,
+        then supplement with recommendations for variety
         """
-        print(f"{self.logger_prefix} 🔍 Discovering similar tracks using Last.fm...")
+        print(f"{self.logger_prefix} 🔍 Discovering tracks for favorite artists and similar artists...")
+        
+        all_tracks = []
         
         try:
             # Parse favorite artists if it's a string
             if isinstance(favorite_artist, str) and favorite_artist:
                 artists = [a.strip() for a in favorite_artist.split(",") if a.strip()]
-            elif favorite_artist:
+            elif favorite_artist:  
                 artists = [favorite_artist]
             else:
-                artists = None
+                artists = []
             
-            # Use get_recommendations to get track recommendations
-            similar_tracks = get_recommendations(
-                seed_artists=artists,
-                genre=genre or self.genre,
-                birth_year=self.birth_year,
-                limit=50
-            )
+            # Strategy 1: Get many tracks from each favorite artist (this is the key function!)
+            if artists:
+                for artist in artists:
+                    print(f"{self.logger_prefix} 🎤 Getting tracks for favorite artist: {artist}")
+                    artist_tracks = self.search_tracks_by_artist(artist, limit=100)  # Can get 100+ tracks per artist
+                    all_tracks.extend(artist_tracks)
+                    print(f"{self.logger_prefix} ✅ Found {len(artist_tracks)} tracks for {artist}")
+            
+            # Strategy 2: Add variety with recommendations from similar artists  
+            if len(all_tracks) < 200:  # If we need more variety
+                print(f"{self.logger_prefix} 🔄 Adding variety with similar artists...")
+                similar_tracks = get_recommendations(
+                    seed_artists=artists or get_genre_seed_artists(genre or self.genre, limit=2),
+                    genre=genre or self.genre,
+                    birth_year=self.birth_year,
+                    limit=50
+                )
+                all_tracks.extend(similar_tracks)
+                print(f"{self.logger_prefix} ✅ Added {len(similar_tracks)} variety tracks")
 
-            if similar_tracks:
-                print(f"{self.logger_prefix} ✅ Found {len(similar_tracks)} similar tracks from Last.fm")
-                return similar_tracks
+            if all_tracks:
+                print(f"{self.logger_prefix} ✅ Total discovered tracks: {len(all_tracks)}")
+                return all_tracks
             else:
-                print(f"{self.logger_prefix} ⚠️ No similar tracks found, using fallback...")
-                # Fallback to genre-based artists
+                print(f"{self.logger_prefix} ⚠️ No tracks found, using genre fallback...")
+                # Last resort fallback to genre-based tracks
                 fallback_artists = get_genre_seed_artists(genre or self.genre, limit=2)
                 fallback_tracks = get_recommendations(
                     seed_artists=fallback_artists,
@@ -177,7 +192,9 @@ class MoodQueEngine:
                 return fallback_tracks or []
                 
         except Exception as e:
-            print(f"{self.logger_prefix} ❌ Error discovering similar tracks: {e}")
+            print(f"{self.logger_prefix} ❌ Error discovering tracks: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def fetch_spotify_track_ids(self, track_list, max_results=300):
@@ -208,9 +225,9 @@ class MoodQueEngine:
                 found_ids.append(self.track_cache[cache_key])
                 continue
 
-            # Search Spotify
+            # Search Spotify with content filtering
             try:
-                track_id = search_spotify_track(artist, track_name, self.headers)
+                track_id = search_spotify_track(artist, track_name, self.headers, self.playlist_type)
                 if track_id:
                     found_ids.append(track_id)
                     self.track_cache[cache_key] = track_id
