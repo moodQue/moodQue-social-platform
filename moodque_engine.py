@@ -39,7 +39,7 @@ from moodque_utilities import (
     create_new_playlist,
     add_tracks_to_playlist,
     calculate_playlist_duration,
-    search_spotify_track_robust
+    search_spotify_track_ultra_robust
 )
 
 # Load .env only in local dev
