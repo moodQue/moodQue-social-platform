@@ -21,7 +21,7 @@ import random
 import uuid
 import json
 import traceback
-from datetime import datetime
+from datetime import datetime, time
 import logging
 
 # Import Firebase initialization
@@ -204,57 +204,73 @@ class MoodQueEngine:
             return []
 
     def fetch_spotify_track_ids(self, track_list, max_results=50):
-        """Convert Last.fm tracks to Spotify track IDs with BATCHING"""
+        """Convert Last.fm tracks to Spotify track IDs with robust error handling"""
+        print(f"{self.logger_prefix} 🔍 Converting {len(track_list)} tracks to Spotify IDs (robust mode)...")
+    
+        # Import the robust search function
+        from moodque_utilities import batch_search_spotify_tracks
+    
+        try:
+            # Use batch processing with robust error handling
+            found_tracks, failed_tracks = batch_search_spotify_tracks(
+                track_list[:max_results], 
+                self.headers, 
+                self.playlist_type
+            )
+        
+            # Extract URIs
+            track_uris = [track["uri"] for track in found_tracks]
+        
+            # Log results
+            print(f"{self.logger_prefix} ✅ Successfully found {len(track_uris)} Spotify track IDs")
+            if failed_tracks:
+                print(f"{self.logger_prefix} ⚠️ Failed to find {len(failed_tracks)} tracks")
+                # Log a few examples of failed tracks for debugging
+                for i, failed in enumerate(failed_tracks[:3]):
+                    print(f"{self.logger_prefix}   Example failed: '{failed['track']}' by '{failed['artist']}'")
+        
+            return track_uris
+        
+        except Exception as e:
+                print(f"{self.logger_prefix} ❌ Critical error in batch processing: {e}")
+        
+            # Fallback to individual processing with even more conservative approach
+        print(f"{self.logger_prefix} 🔄 Falling back to individual track processing...")
+        
         found_ids = []
+        from moodque_utilities import search_spotify_track_robust
         
-        print(f"{self.logger_prefix} 🔍 Converting {len(track_list)} tracks to Spotify IDs (batched)...")
-        
-        # Process in batches of 10 to prevent timeout
-        batch_size = 10
-        for i in range(0, len(track_list), batch_size):
-            if len(found_ids) >= max_results:
-                break
-                
-            batch = track_list[i:i + batch_size]
-            print(f"{self.logger_prefix} 📦 Processing batch {i//batch_size + 1} ({len(batch)} tracks)...")
-            
-            for track_info in batch:
+        for i, track_info in enumerate(track_list[:max_results]):
                 if len(found_ids) >= max_results:
                     break
-
-                # Handle different track info formats
+                
+                if i > 0 and i % 10 == 0:
+                    print(f"{self.logger_prefix} 📊 Progress: {i}/{len(track_list)} tracks processed")
+            
                 if isinstance(track_info, dict):
                     artist = track_info.get("artist", "")
                     track_name = track_info.get("track", "")
                 else:
-                    print(f"{self.logger_prefix} ⚠️ Unexpected track format: {track_info}")
                     continue
-
+            
                 if not artist or not track_name:
                     continue
-
-                cache_key = f"{artist.lower()}_{track_name.lower()}"
-
-                # Check cache first
-                if cache_key in self.track_cache:
-                    found_ids.append(self.track_cache[cache_key])
-                    continue
-
-                # Search Spotify with content filtering
-                try:
-                    track_id = search_spotify_track(artist, track_name, self.headers, self.playlist_type)
-                    if track_id:
-                        found_ids.append(track_id)
-                        self.track_cache[cache_key] = track_id
-                        
-                except Exception as e:
-                    print(f"{self.logger_prefix} ❌ Error searching for {artist} - {track_name}: {e}")
             
-            # Small delay between batches to be nice to APIs
-            import time
-            time.sleep(0.1)
-
-        print(f"{self.logger_prefix} ✅ Found {len(found_ids)} Spotify track IDs")
+                try:
+                    track_uri = search_spotify_track_robust(
+                        artist, track_name, self.headers, self.playlist_type, max_retries=2
+                    )
+                    if track_uri:
+                        found_ids.append(track_uri)
+                    
+                    # Small delay between individual requests
+                    time.sleep(0.1)
+                
+                except Exception as track_error:
+                    print(f"{self.logger_prefix} ⚠️ Skipping '{track_name}' by '{artist}': {track_error}")
+                    continue
+        
+        print(f"{self.logger_prefix} ✅ Fallback processing found {len(found_ids)} track IDs")
         return found_ids
 
     def create_spotify_playlist(self, track_ids):
