@@ -21,7 +21,8 @@ import random
 import uuid
 import json
 import traceback
-from datetime import datetime, time
+from datetime import datetime
+import time
 import logging
 
 # Import Firebase initialization
@@ -38,7 +39,7 @@ from moodque_utilities import (
     create_new_playlist,
     add_tracks_to_playlist,
     calculate_playlist_duration,
-    search_spotify_track
+    search_spotify_track_robust
 )
 
 # Load .env only in local dev
@@ -211,7 +212,7 @@ class MoodQueEngine:
         from moodque_utilities import batch_search_spotify_tracks
     
         try:
-            # Use batch processing with robust error handling
+        # Use batch processing with robust error handling
             found_tracks, failed_tracks = batch_search_spotify_tracks(
                 track_list[:max_results], 
                 self.headers, 
