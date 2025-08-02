@@ -9,6 +9,8 @@ from moodque_engine import MoodQueEngine
 from moodque_auth import auth_bp
 from flask import Flask, request, redirect, jsonify
 from datetime import datetime
+from firebase_admin import firestore
+from ml_reengagement_system import MLReengagementEngine
 
 # Initialize Firebase first
 import firebase_admin_init
@@ -345,8 +347,9 @@ def glide_social():
             user_id=user_id,
             playlist_type=playlist_type,
             request_id=row_id,  # FIXED: This must be the exact row_id from Glide
-            birth_year=birth_year
-        )
+            birth_year=birth_year,
+            streaming_service="spotify" # ADDED: Specify streaming service
+            )
         
         if playlist_result:
             logger.info(f"✅ Playlist created: {playlist_result}")
@@ -936,4 +939,120 @@ def get_spotify_status():
         return jsonify({
             "spotify_connected": False,
             "error": str(e)
-        }), 500        
+        }), 500       
+        
+# Add these imports to the top of your moodQueSocial_webhook_service.py
+
+from ml_reengagement_system import MLReengagementEngine
+
+# ML analysis endpoints
+
+@app.route('/trigger_ml_analysis', methods=['POST'])
+def trigger_ml_analysis():
+    """Manually trigger ML analysis for testing"""
+    try:
+        logger.info("🤖 Manual ML analysis triggered")
+        ml_engine = MLReengagementEngine()
+        result = ml_engine.run_weekly_analysis()
+        
+        return jsonify({
+            "status": "success",
+            "analysis_result": result,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ ML analysis failed: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+@app.route('/user_recommendations/<user_id>', methods=['GET'])
+def get_user_recommendations(user_id):
+    """Get pending recommendations for a user"""
+    try:
+        recommendations_ref = db.collection("weekly_recommendations") \
+            .where("user_id", "==", user_id) \
+            .where("status", "==", "pending") \
+            .order_by("created_at", direction=firestore.Query.DESCENDING) \
+            .limit(5)
+        
+        recommendations = []
+        for doc in recommendations_ref.stream():
+            rec_data = doc.to_dict()
+            rec_data["id"] = doc.id
+            recommendations.append(rec_data)
+        
+        return jsonify({
+            "status": "success",
+            "recommendations": recommendations,
+            "count": len(recommendations)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Get recommendations failed: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+@app.route('/mark_recommendation_read/<recommendation_id>', methods=['POST'])
+def mark_recommendation_read(recommendation_id):
+    """Mark a recommendation as read"""
+    try:
+        db.collection("weekly_recommendations").document(recommendation_id).update({
+            "status": "read",
+            "read_at": datetime.now().isoformat()
+        })
+        
+        return jsonify({
+            "status": "success",
+            "message": "Recommendation marked as read"
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Mark recommendation read failed: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+@app.route('/ml_stats', methods=['GET'])
+def get_ml_stats():
+    """Get ML system statistics"""
+    try:
+        # Get cache stats
+        cache_ref = db.collection("track_cache")
+        total_cached = len(list(cache_ref.stream()))
+        
+        # Get recent analysis
+        analysis_ref = db.collection("ml_analysis").order_by("analysis_date", direction=firestore.Query.DESCENDING).limit(1)
+        latest_analysis = None
+        for doc in analysis_ref.stream():
+            latest_analysis = doc.to_dict()
+            break
+        
+        # Get pending notifications
+        pending_notifications = len(list(
+            db.collection("weekly_recommendations")
+            .where("status", "==", "pending")
+            .stream()
+        ))
+        
+        return jsonify({
+            "status": "success",
+            "stats": {
+                "total_cached_tracks": total_cached,
+                "latest_analysis_date": latest_analysis.get("analysis_date") if latest_analysis else None,
+                "pending_notifications": pending_notifications,
+                "ml_system_active": True
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Get ML stats failed: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500         
