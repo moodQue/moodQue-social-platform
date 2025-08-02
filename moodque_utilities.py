@@ -5,6 +5,8 @@ import time
 import re
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import threading
+from datetime import datetime, timedelta
 
 
 # Only load .env if running locally (Railway sets env vars automatically)
@@ -203,124 +205,208 @@ def create_robust_session():
     
     return session
 
-def search_spotify_track_robust(artist, title, headers, playlist_type="clean", max_retries=3):
+class CircuitBreaker:
+    def __init__(self, failure_threshold=5, recovery_timeout=60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
+        self.lock = threading.Lock()
+    
+    def is_open(self):
+        with self.lock:
+            if self.state == 'OPEN':
+                if datetime.now() - self.last_failure_time > timedelta(seconds=self.recovery_timeout):
+                    self.state = 'HALF_OPEN'
+                    return False
+                return True
+            return False
+    
+    def record_success(self):
+        with self.lock:
+            self.failure_count = 0
+            self.state = 'CLOSED'
+    
+    def record_failure(self):
+        with self.lock:
+            self.failure_count += 1
+            self.last_failure_time = datetime.now()
+            if self.failure_count >= self.failure_threshold:
+                self.state = 'OPEN'
+
+# Global circuit breaker instance
+spotify_circuit_breaker = CircuitBreaker()
+
+def search_spotify_track_ultra_robust(artist, title, headers, playlist_type="clean", max_retries=2):
     """
-    Enhanced Spotify search with robust error handling and retries
+    Ultra-robust Spotify search with circuit breaker pattern and aggressive fallback
     """
     import re
-
+    
+    # Check circuit breaker
+    if spotify_circuit_breaker.is_open():
+        print(f"⚡ Circuit breaker OPEN - skipping Spotify search for '{title}' by '{artist}'")
+        return None
+    
     def clean_text(text):
-        # Remove content inside parentheses or brackets, normalize
         text = re.sub(r"\(.*?\)|\[.*?\]", "", text)
         text = text.replace("feat.", "").replace("featuring", "")
         return text.strip().lower()
 
     if not artist or not title or not headers:
-        print("❌ Missing required parameters for Spotify search")
         return None
 
     cleaned_title = clean_text(title)
     cleaned_artist = clean_text(artist)
 
-    # Create robust session
-    session = create_robust_session()
-
-    base_queries = [
-        f'track:"{title}" artist:"{artist}"',
-        f'{title} {artist}',
-        f'track:{title} artist:{artist}',
-        f'{artist} {title}'
+    # Much simpler query strategy to reduce load
+    simple_queries = [
+        f'{artist} {title}',  # Simplest query first
     ]
 
     for attempt in range(max_retries):
-        for query_idx, query in enumerate(base_queries):
+        for query in simple_queries:
             try:
-                print(f"🔍 Attempt {attempt + 1}/{max_retries}, Query {query_idx + 1}/{len(base_queries)}: '{query[:50]}...'")
-                
                 params = {
                     "q": query, 
                     "type": "track", 
-                    "limit": 10, 
+                    "limit": 3,  # Much smaller limit
                     "market": "US"
                 }
                 
-                # Use session with shorter timeout
-                response = session.get(
+                # Very aggressive timeout
+                response = requests.get(
                     "https://api.spotify.com/v1/search", 
                     headers=headers, 
                     params=params,
-                    timeout=(5, 10)  # (connect timeout, read timeout)
+                    timeout=(3, 5)  # Very short timeouts: 3s connect, 5s read
                 )
 
                 if response.status_code == 200:
+                    spotify_circuit_breaker.record_success()  # Record success
+                    
                     data = response.json()
                     tracks = data.get("tracks", {}).get("items", [])
                     
                     for track in tracks:
-                        # Check if track matches our search criteria
+                        # Very basic matching - just check if artist is somewhat similar
                         t_name = clean_text(track.get("name", ""))
                         t_artist = clean_text(track.get("artists", [{}])[0].get("name", ""))
                         is_explicit = track.get("explicit", False)
                         
-                        # Verify this is the right track
-                        if cleaned_title in t_name and cleaned_artist in t_artist:
+                        # Looser matching criteria
+                        if (cleaned_artist[:5] in t_artist or t_artist[:5] in cleaned_artist) and \
+                           (cleaned_title[:5] in t_name or t_name[:5] in cleaned_title):
+                            
                             # Apply content filter
                             if playlist_type.lower() == "clean" and is_explicit:
-                                print(f"⚠️ Skipping explicit track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
                                 continue
                             elif playlist_type.lower() == "explicit" and not is_explicit:
-                                print(f"⚠️ Skipping clean track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
                                 continue
                             
-                            # Found a matching track that passes content filter
-                            content_type = "explicit" if is_explicit else "clean"
-                            print(f"✅ Found {content_type} track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
+                            print(f"✅ Found track: '{track.get('name')}' by '{track.get('artists', [{}])[0].get('name')}'")
                             return track["uri"]
                 
                 elif response.status_code == 429:
-                    # Rate limited - wait longer
-                    retry_after = int(response.headers.get('Retry-After', 60))
-                    print(f"⏳ Rate limited. Waiting {retry_after} seconds...")
-                    time.sleep(retry_after)
-                    continue
+                    # Rate limited - immediately break and record failure
+                    print(f"⏳ Rate limited - backing off")
+                    spotify_circuit_breaker.record_failure()
+                    time.sleep(5)
+                    return None
                     
                 elif response.status_code in [401, 403]:
-                    print(f"🔐 Authentication error: {response.status_code}")
-                    return None  # Don't retry auth errors
-                    
-                else:
-                    print(f"⚠️ Spotify API returned status {response.status_code}")
+                    print(f"🔐 Auth error: {response.status_code}")
+                    spotify_circuit_breaker.record_failure()
+                    return None
                     
             except requests.exceptions.Timeout:
-                print(f"⏰ Timeout on attempt {attempt + 1} for query '{query[:30]}...'")
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # Exponential backoff
-                    print(f"⏳ Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
+                print(f"⏰ Timeout on attempt {attempt + 1} - query: '{query[:20]}...'")
+                spotify_circuit_breaker.record_failure()
+                if attempt == max_retries - 1:
+                    return None
+                time.sleep(1)  # Short wait
                 continue
                 
-            except requests.exceptions.ConnectionError as e:
-                print(f"🌐 Connection error on attempt {attempt + 1}: {str(e)[:100]}")
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 3
-                    print(f"⏳ Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                continue
-                
-            except requests.exceptions.RequestException as e:
-                print(f"❌ Request exception: {str(e)[:100]}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
+            except (requests.exceptions.ConnectionError, 
+                    requests.exceptions.RequestException) as e:
+                print(f"🌐 Network error: {str(e)[:50]}...")
+                spotify_circuit_breaker.record_failure()
+                if attempt == max_retries - 1:
+                    return None
+                time.sleep(1)
                 continue
                 
             except Exception as e:
-                print(f"💥 Unexpected error: {str(e)[:100]}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-                continue
+                print(f"💥 Unexpected error: {str(e)[:50]}...")
+                spotify_circuit_breaker.record_failure()
+                return None
 
-    print(f"❌ Failed to find {playlist_type} match for '{title}' by '{artist}' after {max_retries} attempts")
     return None
+
+def batch_search_spotify_tracks_ultra_safe(track_list, headers, playlist_type="clean", batch_size=3):
+    """
+    Ultra-safe batch processing with very small batches and long delays
+    """
+    found_tracks = []
+    failed_tracks = []
+    
+    print(f"🔄 Ultra-safe processing {len(track_list)} tracks in tiny batches of {batch_size}")
+    
+    for i in range(0, len(track_list), batch_size):
+        # Check if we should stop due to circuit breaker
+        if spotify_circuit_breaker.is_open():
+            print(f"⚡ Circuit breaker OPEN - stopping batch processing")
+            break
+            
+        batch = track_list[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+        total_batches = (len(track_list) + batch_size - 1) // batch_size
+        
+        print(f"📦 Processing micro-batch {batch_num}/{total_batches}")
+        
+        for track_info in batch:
+            if isinstance(track_info, dict):
+                artist = track_info.get("artist", "")
+                track_name = track_info.get("track", "")
+            else:
+                continue
+            
+            if not artist or not track_name:
+                continue
+            
+            try:
+                track_uri = search_spotify_track_ultra_robust(
+                    artist, track_name, headers, playlist_type, max_retries=1  # Only 1 retry
+                )
+                
+                if track_uri:
+                    found_tracks.append({
+                        "uri": track_uri,
+                        "artist": artist,
+                        "track": track_name
+                    })
+                else:
+                    failed_tracks.append({
+                        "artist": artist,
+                        "track": track_name,
+                        "reason": "not_found_or_timeout"
+                    })
+                    
+            except Exception as e:
+                failed_tracks.append({
+                    "artist": artist,
+                    "track": track_name,
+                    "reason": str(e)[:50]
+                })
+        
+        # Longer delay between micro-batches
+        if batch_num < total_batches:
+            print("⏳ Waiting between micro-batches...")
+            time.sleep(2)  # 2 second delay
+    
+    print(f"✅ Ultra-safe processing complete: {len(found_tracks)} found, {len(failed_tracks)} failed")
+    return found_tracks, failed_tracks
 
 # Batch processing function to handle multiple tracks efficiently
 def batch_search_spotify_tracks(track_list, headers, playlist_type="clean", batch_size=5):
@@ -351,7 +437,7 @@ def batch_search_spotify_tracks(track_list, headers, playlist_type="clean", batc
                 continue
             
             try:
-                track_uri = search_spotify_track_robust(
+                track_uri = search_spotify_track_ultra_robust(
                     artist, track_name, headers, playlist_type
                 )
                 
