@@ -161,8 +161,8 @@ class MoodQueEngine:
             if artists:
                 for artist in artists:
                     print(f"{self.logger_prefix} 🎤 Getting tracks for favorite artist: {artist}")
-                    # Use smaller batch size to prevent timeout
-                    artist_tracks = search_tracks_by_artist(artist, limit=20)
+                    # FIXED: Remove self. and use smaller batch size
+                    artist_tracks = search_tracks_by_artist(artist, limit=20)  # Smaller batches to prevent timeout
                     all_tracks.extend(artist_tracks)
                     print(f"{self.logger_prefix} ✅ Found {len(artist_tracks)} tracks for {artist}")
                     
@@ -203,7 +203,7 @@ class MoodQueEngine:
             traceback.print_exc()
             return []
 
-    def fetch_spotify_track_ids(self, track_list, max_results=50):
+    def fetch_spotify_track_ids(self, track_list, max_results=50):  # Reduced from 300
         """Convert Last.fm tracks to Spotify track IDs with BATCHING"""
         found_ids = []
         
@@ -240,7 +240,7 @@ class MoodQueEngine:
                     found_ids.append(self.track_cache[cache_key])
                     continue
 
-                # Search Spotify with content filtering
+                # Search Spotify with content filtering (FIXED: No self.)
                 try:
                     track_id = search_spotify_track(artist, track_name, self.headers, self.playlist_type)
                     if track_id:
@@ -253,6 +253,47 @@ class MoodQueEngine:
             # Small delay between batches to be nice to APIs
             import time
             time.sleep(0.1)
+
+        print(f"{self.logger_prefix} ✅ Found {len(found_ids)} Spotify track IDs")
+        return found_ids
+
+    def fetch_spotify_track_ids(self, track_list, max_results=300):
+        """Convert Last.fm tracks to Spotify track IDs"""
+        found_ids = []
+        
+        print(f"{self.logger_prefix} 🔍 Converting {len(track_list)} tracks to Spotify IDs...")
+        
+        for track_info in track_list:
+            if len(found_ids) >= max_results:
+                break
+
+            # Handle different track info formats
+            if isinstance(track_info, dict):
+                artist = track_info.get("artist", "")
+                track_name = track_info.get("track", "")
+            else:
+                print(f"{self.logger_prefix} ⚠️ Unexpected track format: {track_info}")
+                continue
+
+            if not artist or not track_name:
+                continue
+
+            cache_key = f"{artist.lower()}_{track_name.lower()}"
+
+            # Check cache first
+            if cache_key in self.track_cache:
+                found_ids.append(self.track_cache[cache_key])
+                continue
+
+            # Search Spotify with content filtering
+            try:
+                track_id = search_spotify_track(artist, track_name, self.headers, self.playlist_type)
+                if track_id:
+                    found_ids.append(track_id)
+                    self.track_cache[cache_key] = track_id
+                    
+            except Exception as e:
+                print(f"{self.logger_prefix} ❌ Error searching for {artist} - {track_name}: {e}")
 
         print(f"{self.logger_prefix} ✅ Found {len(found_ids)} Spotify track IDs")
         return found_ids
@@ -412,18 +453,18 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         print(error_msg)
         raise ValueError("request_id parameter is required")
     
-    # Handle user_id properly
+    # FIXED: Ensure user_id is properly handled
     if not user_id or user_id == 'unknown':
         user_id = 'anonymous'
     
-    # Validate and clean parameters
+    # FIXED: Validate and clean parameters
     if not event_name:
         event_name = "My MoodQue Playlist"
     
     if not genre:
         genre = "pop"
     
-    # Handle time parameter safely
+    # FIXED: Handle time parameter safely
     try:
         time = int(time) if time else 30
     except (ValueError, TypeError):
@@ -443,7 +484,7 @@ def build_smart_playlist_enhanced(event_name, genre, time, mood_tags, search_key
         'birth_year': birth_year
     }
     
-    # Log the request data for debugging
+    # ADDED: Log the request data for debugging
     print(f"[{request_id}] 🔧 Building playlist with parameters:")
     for key, value in request_data.items():
         print(f"[{request_id}]   {key}: {value}")

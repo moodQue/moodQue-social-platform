@@ -83,80 +83,7 @@ GENRE_ARTIST_SEEDS = {
     "grunge": ["Nirvana", "Pearl Jam", "Soundgarden"]
 }
 
-# Standard timeout for all API calls
-API_TIMEOUT = 8  # seconds
-
-def get_lastfm_top_tracks(artist_name: str, limit: int = 15) -> List[tuple]:
-    """Get top tracks for an artist from Last.fm API"""
-    if not LASTFM_API_KEY:
-        return []
-    
-    url = "https://ws.audioscrobbler.com/2.0/"
-    params = {
-        "method": "artist.gettoptracks",
-        "artist": artist_name.strip(),
-        "api_key": LASTFM_API_KEY,
-        "format": "json",
-        "limit": limit
-    }
-    
-    try:
-        res = requests.get(url, params=params, timeout=API_TIMEOUT)
-        if res.status_code == 200:
-            data = res.json()
-            if "error" in data:
-                return []
-            
-            top_tracks = data.get("toptracks", {})
-            if isinstance(top_tracks, dict):
-                tracks_list = top_tracks.get("track", [])
-                if isinstance(tracks_list, list):
-                    return [(t["name"], artist_name) for t in tracks_list if isinstance(t, dict) and "name" in t]
-                elif isinstance(tracks_list, dict):
-                    track_name = tracks_list.get("name")
-                    return [(track_name, artist_name)] if track_name else []
-        return []
-    except Exception as e:
-        print(f"❌ Error fetching top tracks for {artist_name}: {e}")
-        return []
-
-def get_lastfm_similar_artists(artist_name: str, limit: int = 5) -> List[str]:
-    """Get similar artists from Last.fm API"""
-    if not LASTFM_API_KEY:
-        print("⚠️ No LASTFM_API_KEY found")
-        return []
-    
-    url = "https://ws.audioscrobbler.com/2.0/"
-    params = {
-        "method": "artist.getsimilar",
-        "artist": artist_name.strip(),
-        "api_key": LASTFM_API_KEY,
-        "format": "json",
-        "limit": limit
-    }
-    
-    try:
-        res = requests.get(url, params=params, timeout=API_TIMEOUT)
-        if res.status_code == 200:
-            data = res.json()
-            if "error" in data:
-                print(f"❌ Last.fm API Error: {data.get('message', 'Unknown error')}")
-                return []
-            
-            similar_artists = data.get("similarartists", {})
-            if isinstance(similar_artists, dict):
-                artists_list = similar_artists.get("artist", [])
-                if isinstance(artists_list, list):
-                    return [a.get("name") for a in artists_list if isinstance(a, dict) and "name" in a]
-                elif isinstance(artists_list, dict):
-                    name = artists_list.get("name")
-                    return [name] if name else []
-        return []
-    except Exception as e:
-        print(f"❌ Error fetching similar artists: {e}")
-        return []
-
-def search_tracks_by_artist(artist_name, limit=20):
+def search_tracks_by_artist(artist_name, limit=20):  # Reduced default from 50 to 20
     """
     Get tracks for a specific artist from Last.fm with BATCHING to prevent timeouts
     """
@@ -168,9 +95,9 @@ def search_tracks_by_artist(artist_name, limit=20):
     
     all_tracks = []
     
-    # Strategy 1: Get artist's top tracks
+    # Strategy 1: Get artist's top tracks (reduced limit)
     try:
-        top_tracks = get_lastfm_top_tracks(artist_name, limit=min(limit, 15))
+        top_tracks = get_lastfm_top_tracks(artist_name, limit=min(limit, 15))  # Reduced from 50 to 15
         all_tracks.extend(top_tracks)
         print(f"🎵 Found {len(top_tracks)} top tracks for {artist_name}")
     except Exception as e:
@@ -180,11 +107,11 @@ def search_tracks_by_artist(artist_name, limit=20):
     if len(all_tracks) < 10 and len(all_tracks) < limit:
         try:
             print(f"🔗 Getting similar artists for {artist_name} (limited)...")
-            similar_artists = get_lastfm_similar_artists(artist_name, limit=2)
+            similar_artists = get_lastfm_similar_artists(artist_name, limit=2)  # Reduced from 3 to 2
             for similar_artist in similar_artists[:1]:  # Only use 1 similar artist
                 if len(all_tracks) >= limit:
                     break
-                similar_tracks = get_lastfm_top_tracks(similar_artist, limit=3)
+                similar_tracks = get_lastfm_top_tracks(similar_artist, limit=3)  # Reduced from 5 to 3
                 for track in similar_tracks:
                     if len(all_tracks) >= limit:
                         break
@@ -208,6 +135,74 @@ def search_tracks_by_artist(artist_name, limit=20):
     print(f"✅ Total tracks found for {artist_name}: {len(formatted_tracks)}")
     return formatted_tracks[:limit]
 
+def get_lastfm_top_tracks(artist_name: str, limit: int = 5) -> List[tuple]:
+    """Get top tracks for an artist from Last.fm API with shorter timeout"""
+    if not LASTFM_API_KEY:
+        return []
+    
+    url = "https://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "artist.gettoptracks",
+        "artist": artist_name.strip(),
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+        "limit": limit
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=5)  # Reduced timeout from 10 to 5
+        if res.status_code == 200:
+            data = res.json()
+            if "error" in data:
+                return []
+            
+            top_tracks = data.get("toptracks", {})
+            if isinstance(top_tracks, dict):
+                tracks_list = top_tracks.get("track", [])
+                if isinstance(tracks_list, list):
+                    return [(t["name"], artist_name) for t in tracks_list if isinstance(t, dict) and "name" in t]
+                elif isinstance(tracks_list, dict):
+                    track_name = tracks_list.get("name")
+                    return [(track_name, artist_name)] if track_name else []
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching top tracks for {artist_name}: {e}")
+        return []
+
+def get_lastfm_similar_artists(artist_name: str, limit: int = 3) -> List[str]:  # Reduced default
+    """Get similar artists from Last.fm API with shorter timeout"""
+    if not LASTFM_API_KEY:
+        return []
+    
+    url = "https://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "artist.getsimilar",
+        "artist": artist_name.strip(),
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+        "limit": limit
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=5)  # Reduced timeout
+        if res.status_code == 200:
+            data = res.json()
+            if "error" in data:
+                return []
+            
+            similar_artists = data.get("similarartists", {})
+            if isinstance(similar_artists, dict):
+                artists_list = similar_artists.get("artist", [])
+                if isinstance(artists_list, list):
+                    return [a.get("name") for a in artists_list if isinstance(a, dict) and "name" in a]
+                elif isinstance(artists_list, dict):
+                    name = artists_list.get("name")
+                    return [name] if name else []
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching similar artists: {e}")
+        return []
+
 def get_artist_album_tracks(artist_name, limit=30):
     """Get tracks from an artist's albums using Last.fm API"""
     if not LASTFM_API_KEY:
@@ -226,7 +221,7 @@ def get_artist_album_tracks(artist_name, limit=30):
             "limit": 10  # Get top 10 albums
         }
         
-        res = requests.get(url, params=params, timeout=API_TIMEOUT)
+        res = requests.get(url, params=params, timeout=10)
         if res.status_code != 200:
             print(f"❌ Failed to get albums for {artist_name}: {res.status_code}")
             return []
@@ -282,7 +277,7 @@ def get_album_tracks(artist_name, album_name, limit=20):
             "format": "json"
         }
         
-        res = requests.get(url, params=params, timeout=API_TIMEOUT)
+        res = requests.get(url, params=params, timeout=10)
         if res.status_code != 200:
             return []
         
@@ -384,6 +379,76 @@ def find_era_overlap(seed_artists: List[str]) -> Dict[str, float]:
             era_weights[era] = era_weights.get(era, 0) + (1.0 / len(seed_artists))
     
     return era_weights
+
+def get_lastfm_similar_artists(artist_name: str, limit: int = 5) -> List[str]:
+    """Get similar artists from Last.fm API"""
+    if not LASTFM_API_KEY:
+        print("⚠️ No LASTFM_API_KEY found")
+        return []
+    
+    url = "https://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "artist.getsimilar",
+        "artist": artist_name.strip(),
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+        "limit": limit
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if "error" in data:
+                print(f"❌ Last.fm API Error: {data.get('message', 'Unknown error')}")
+                return []
+            
+            similar_artists = data.get("similarartists", {})
+            if isinstance(similar_artists, dict):
+                artists_list = similar_artists.get("artist", [])
+                if isinstance(artists_list, list):
+                    return [a.get("name") for a in artists_list if isinstance(a, dict) and "name" in a]
+                elif isinstance(artists_list, dict):
+                    name = artists_list.get("name")
+                    return [name] if name else []
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching similar artists: {e}")
+        return []
+
+def get_lastfm_top_tracks(artist_name: str, limit: int = 5) -> List[tuple]:
+    """Get top tracks for an artist from Last.fm API"""
+    if not LASTFM_API_KEY:
+        return []
+    
+    url = "https://ws.audioscrobbler.com/2.0/"
+    params = {
+        "method": "artist.gettoptracks",
+        "artist": artist_name.strip(),
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+        "limit": limit
+    }
+    
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if "error" in data:
+                return []
+            
+            top_tracks = data.get("toptracks", {})
+            if isinstance(top_tracks, dict):
+                tracks_list = top_tracks.get("track", [])
+                if isinstance(tracks_list, list):
+                    return [(t["name"], artist_name) for t in tracks_list if isinstance(t, dict) and "name" in t]
+                elif isinstance(tracks_list, dict):
+                    track_name = tracks_list.get("name")
+                    return [(track_name, artist_name)] if track_name else []
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching top tracks for {artist_name}: {e}")
+        return []
 
 def get_genre_seed_artists(genre: str, limit: int = 3) -> List[str]:
     """Get seed artists for a genre when no favorite artist is provided"""
@@ -587,7 +652,7 @@ def get_lastfm_track_info(artist: str, track: str) -> Optional[Dict]:
     }
     
     try:
-        res = requests.get(url, params=params, timeout=API_TIMEOUT)
+        res = requests.get(url, params=params, timeout=10)
         if res.status_code == 200:
             data = res.json()
             if "error" not in data and "track" in data:
