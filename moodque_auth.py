@@ -25,7 +25,14 @@ SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "https://example.com/callback")
-SCOPES = "playlist-modify-private playlist-modify-public user-read-private user-read-email"
+SCOPES = (
+    "playlist-modify-private "
+    "playlist-modify-public "
+    "user-read-private "
+    "user-read-email "
+    "user-top-read"
+)
+
 #update scopes moodque auth
 def init_firebase_app():
     """
@@ -148,6 +155,7 @@ def callback():
     token_data = response.json()
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
+    new_scopes = set(token_data.get("scope", "").split())
 
     # Get Spotify user profile
     user_profile_resp = requests.get(
@@ -163,20 +171,38 @@ def callback():
     spotify_user_id = spotify_user["id"]
     spotify_display_name = spotify_user.get("display_name", spotify_user_id)
 
-    # Save tokens with both Glide user_id and Spotify user_id
     try:
-        db.collection("users").document(spotify_user_id).set({
-            "glide_user_id": user_id,
-            "spotify_user_id": spotify_user_id,
-            "spotify_access_token": access_token,
-            "spotify_refresh_token": refresh_token,
-            "spotify_token_expires_at": str(time.time() + token_data.get("expires_in", 3600)),
-            "spotify_display_name": spotify_display_name,
-            "connected_at": datetime.now().isoformat()
-        }, merge=True)
+        # Get any existing user data
+        user_doc_ref = db.collection("users").document(spotify_user_id)
+        existing_data = {}
+        existing_doc = user_doc_ref.get()
+        if existing_doc.exists:
+            existing_data = existing_doc.to_dict()
+
+        # Always update access token and expiry
+        existing_data["spotify_access_token"] = access_token
+        existing_data["spotify_token_expires_at"] = str(time.time() + token_data.get("expires_in", 3600))
+
+        # Only overwrite refresh token if we got a new one
+        if refresh_token:
+            existing_data["spotify_refresh_token"] = refresh_token
+
+        # Merge scopes
+        existing_scopes = set(existing_data.get("spotify_scopes", "").split())
+        merged_scopes = existing_scopes.union(new_scopes)
+        existing_data["spotify_scopes"] = " ".join(sorted(merged_scopes))
+
+        # Always store display name and IDs
+        existing_data["glide_user_id"] = user_id
+        existing_data["spotify_user_id"] = spotify_user_id
+        existing_data["spotify_display_name"] = spotify_display_name
+        existing_data["connected_at"] = datetime.now().isoformat()
+
+        # Save back to Firestore
+        user_doc_ref.set(existing_data, merge=True)
         
         print(f"✅ Spotify connected for Glide user {user_id} -> Spotify user {spotify_user_id}")
-        
+
         # Redirect back to Glide with success info
         success_params = {
             "spotify_connected": "true",
@@ -185,13 +211,9 @@ def callback():
             "connection_status": "success"
         }
         
-        # Build success URL
         success_url = f"{return_url}?" + "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in success_params.items()])
         return redirect(success_url)
-        
+
     except Exception as e:
         print(f"❌ Error saving to Firebase: {e}")
         return redirect(f"{return_url}?spotify_error=database_failed")
-
-# Don't forget to add this import at the top if not already there:
-import urllib.parse
