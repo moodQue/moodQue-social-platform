@@ -103,7 +103,7 @@ app.register_blueprint(auth_bp)
 
 @app.route("/callback", methods=["GET"])
 def spotify_callback():
-    """Complete Spotify OAuth callback with webhook response to update Glide table"""
+    """Complete Spotify OAuth callback with enhanced debugging for 403 errors"""
     
     # Extract parameters
     code = request.args.get("code")
@@ -136,7 +136,7 @@ def spotify_callback():
             print(f"⚠️ Error parsing state: {e}")
     
     glide_user_email = state_params.get("user_email", "")
-    glide_row_id = state_params.get("row_id", "")  # Get row_id from state if provided
+    glide_row_id = state_params.get("row_id", "")
     return_url = state_params.get("return_url", "https://moodque.glide.page")
     
     # Step 1: Exchange code for tokens
@@ -147,8 +147,12 @@ def spotify_callback():
     
     if not all([redirect_uri, client_id, client_secret]):
         print("❌ Missing Spotify credentials")
+        print(f"   SPOTIFY_CLIENT_ID: {'Present' if client_id else 'Missing'}")
+        print(f"   SPOTIFY_CLIENT_SECRET: {'Present' if client_secret else 'Missing'}")
+        print(f"   SPOTIFY_REDIRECT_URI: {redirect_uri}")
         return redirect(f"{return_url}?spotify_error=config_error")
     
+    # Enhanced token exchange payload with explicit headers
     payload = {
         "grant_type": "authorization_code",
         "code": code,
@@ -157,17 +161,52 @@ def spotify_callback():
         "client_secret": client_secret
     }
     
+    # Use Basic Auth instead of including credentials in payload
+    auth_string = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    token_headers = {
+        "Authorization": f"Basic {auth_string}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    
+    # Remove client_id and client_secret from payload since we're using Basic Auth
+    token_payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri
+    }
+    
     try:
         print("🔄 Exchanging code for tokens...")
-        token_resp = requests.post(token_url, data=payload, timeout=10)
-        token_resp.raise_for_status()
+        print(f"   Token URL: {token_url}")
+        print(f"   Redirect URI: {redirect_uri}")
+        print(f"   Using Basic Auth: {auth_string[:20]}...")
+        
+        token_resp = requests.post(token_url, headers=token_headers, data=token_payload, timeout=10)
+        
+        print(f"   Token response status: {token_resp.status_code}")
+        print(f"   Token response headers: {dict(token_resp.headers)}")
+        
+        if token_resp.status_code != 200:
+            print(f"   Token response body: {token_resp.text}")
+            token_resp.raise_for_status()
+        
         token_data = token_resp.json()
         print("✅ Token exchange successful")
+        
+        # Debug token data (don't log the actual tokens for security)
+        print(f"   Token type: {token_data.get('token_type', 'N/A')}")
+        print(f"   Expires in: {token_data.get('expires_in', 'N/A')} seconds")
+        print(f"   Scope: {token_data.get('scope', 'N/A')}")
+        print(f"   Access token present: {'Yes' if token_data.get('access_token') else 'No'}")
+        print(f"   Refresh token present: {'Yes' if token_data.get('refresh_token') else 'No'}")
+        
     except requests.exceptions.Timeout:
         print("❌ Token exchange timeout")
         return redirect(f"{return_url}?spotify_error=timeout")
     except requests.exceptions.RequestException as e:
         print(f"❌ Token exchange failed: {e}")
+        print(f"   Response status: {getattr(e.response, 'status_code', 'N/A')}")
+        print(f"   Response text: {getattr(e.response, 'text', 'N/A')}")
         return redirect(f"{return_url}?spotify_error=token_failed")
     except Exception as e:
         print(f"❌ Unexpected error in token exchange: {e}")
@@ -176,27 +215,66 @@ def spotify_callback():
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
     expires_in = token_data.get("expires_in", 3600)
+    token_scope = token_data.get("scope", "")
     
     if not access_token:
         print("❌ No access token received")
         return redirect(f"{return_url}?spotify_error=no_token")
     
-    # Step 2: Get Spotify user profile
+    # Step 2: Get Spotify user profile with enhanced debugging
     try:
         print("👤 Fetching user profile...")
+        
+        profile_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        print(f"   Profile URL: https://api.spotify.com/v1/me")
+        print(f"   Authorization header: Bearer {access_token[:20]}...")
+        print(f"   Token scope received: {token_scope}")
+        
         profile_resp = requests.get(
             "https://api.spotify.com/v1/me",
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers=profile_headers,
             timeout=10
         )
+        
+        print(f"   Profile response status: {profile_resp.status_code}")
+        print(f"   Profile response headers: {dict(profile_resp.headers)}")
+        
+        if profile_resp.status_code == 403:
+            print("❌ 403 Forbidden - Token may not have required scopes")
+            print(f"   Expected scopes: user-read-private, user-read-email")
+            print(f"   Received scopes: {token_scope}")
+            print(f"   Response body: {profile_resp.text}")
+            
+            # Try a simpler endpoint to test token validity
+            print("🔄 Testing token with simpler endpoint...")
+            test_resp = requests.get(
+                "https://api.spotify.com/v1/me/playlists?limit=1",
+                headers=profile_headers,
+                timeout=5
+            )
+            print(f"   Test endpoint status: {test_resp.status_code}")
+            
+            return redirect(f"{return_url}?spotify_error=insufficient_permissions")
+        
         profile_resp.raise_for_status()
         user_profile = profile_resp.json()
         print("✅ User profile fetched successfully")
+        print(f"   User ID: {user_profile.get('id', 'N/A')}")
+        print(f"   Display name: {user_profile.get('display_name', 'N/A')}")
+        print(f"   Email: {user_profile.get('email', 'N/A')}")
+        print(f"   Country: {user_profile.get('country', 'N/A')}")
+        
     except requests.exceptions.Timeout:
         print("❌ Profile fetch timeout")
         return redirect(f"{return_url}?spotify_error=profile_timeout")
     except requests.exceptions.RequestException as e:
         print(f"❌ Profile fetch failed: {e}")
+        print(f"   Response status: {getattr(e.response, 'status_code', 'N/A')}")
+        print(f"   Response text: {getattr(e.response, 'text', 'N/A')}")
         return redirect(f"{return_url}?spotify_error=profile_failed")
     except Exception as e:
         print(f"❌ Unexpected error fetching profile: {e}")
@@ -238,6 +316,7 @@ def spotify_callback():
         "spotify_access_token": access_token,
         "spotify_refresh_token": refresh_token,
         "spotify_token_expires_at": str(int(time.time()) + expires_in),
+        "spotify_token_scope": token_scope,  # Store the actual scopes received
         "spotify_connected": True,
         
         # Additional profile data
@@ -249,7 +328,7 @@ def spotify_callback():
         
         # Glide integration
         "glide_user_email": glide_user_email,
-        "glide_row_id": glide_row_id,  # Store the row_id if provided
+        "glide_row_id": glide_row_id,
         "connected_at": connection_timestamp,
         "last_token_refresh": connection_timestamp,
         
@@ -277,6 +356,7 @@ def spotify_callback():
             existing_data.update({
                 "spotify_access_token": access_token,
                 "spotify_token_expires_at": str(int(time.time()) + expires_in),
+                "spotify_token_scope": token_scope,
                 "spotify_connected": True,
                 "last_token_refresh": connection_timestamp,
                 "glide_user_email": glide_user_email or existing_data.get("glide_user_email", ""),
@@ -305,16 +385,15 @@ def spotify_callback():
         traceback.print_exc()
         return redirect(f"{return_url}?spotify_error=database_failed")
     
-    # Step 5: Send webhook data to Glide to update User Profiles table
+    # Step 5: Send webhook data to Glide
     try:
         glide_webhook_url = os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
         if glide_webhook_url:
             print("📤 Sending Spotify connection data to Glide webhook...")
             
-            # Create the webhook payload in the format your Incoming Webhook Data table expects
             webhook_data = {
                 "jsonBody": {
-                    "row_id": final_row_id or spotify_user_id,  # Use row_id or fallback to spotify_user_id
+                    "row_id": final_row_id or spotify_user_id,
                     "status": "connected",
                     "user_id": spotify_user_id,
                     "has_code": "true",
@@ -337,10 +416,8 @@ def spotify_callback():
                 }
             }
             
-            # Log the webhook payload for debugging
             print(f"📋 Webhook payload: {json.dumps(webhook_data, indent=2)}")
             
-            # Send the webhook
             webhook_response = requests.post(
                 glide_webhook_url, 
                 json=webhook_data, 
@@ -355,7 +432,6 @@ def spotify_callback():
                 print("✅ Glide webhook notification sent successfully")
             else:
                 print(f"⚠️ Glide webhook failed: {webhook_response.status_code}")
-                print(f"Response: {webhook_response.text}")
                 
     except Exception as e:
         print(f"⚠️ Glide webhook notification failed (non-critical): {e}")
@@ -378,7 +454,6 @@ def spotify_callback():
     
     print(f"✅ Spotify connection successful! Redirecting to: {return_url}")
     return redirect(success_url)
-
 # Also add this helper endpoint to check connection status
 @app.route('/spotify_connection_status', methods=['POST'])
 def spotify_connection_status():
@@ -1490,11 +1565,13 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
+# Make sure to import base64 at the top of your file
+import base64
+
 @app.route('/spotify_connect', methods=['POST', 'GET'])
 def spotify_connect():
     """
     Endpoint for Glide to initiate Spotify OAuth with proper state parameters
-    This ensures row_id and user info are passed through the OAuth flow
     """
     try:
         if request.method == 'POST':
@@ -1503,7 +1580,6 @@ def spotify_connect():
             row_id = data.get('row_id') or data.get('id', '')
             return_url = data.get('return_url', 'https://moodque.glide.page')
         else:
-            # GET request with query parameters
             user_email = request.args.get('user_email') or request.args.get('email', '')
             row_id = request.args.get('row_id') or request.args.get('id', '')
             return_url = request.args.get('return_url', 'https://moodque.glide.page')
@@ -1512,6 +1588,9 @@ def spotify_connect():
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
         
         if not client_id or not redirect_uri:
+            print("❌ Missing Spotify OAuth configuration")
+            print(f"   SPOTIFY_CLIENT_ID: {'Present' if client_id else 'Missing'}")
+            print(f"   SPOTIFY_REDIRECT_URI: {redirect_uri}")
             return jsonify({
                 "error": "Missing Spotify configuration",
                 "status": "error"
@@ -1529,45 +1608,53 @@ def spotify_connect():
         # Encode state as URL parameters
         state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
         
-        # Spotify OAuth scopes
+        # CORRECTED: Explicit scopes that work for user profile access
         scopes = [
-            "playlist-modify-private",
-            "playlist-modify-public", 
-            "user-read-private",
-            "user-read-email",
-            "user-top-read",
-            "user-library-read",
-            "user-read-recently-played"
+            "user-read-private",      # REQUIRED for /me endpoint
+            "user-read-email",        # REQUIRED for email access
+            "playlist-modify-private", # For creating private playlists
+            "playlist-modify-public",  # For creating public playlists
+            "user-top-read",          # For top artists/tracks
+            "user-library-read",      # For saved tracks
+            "user-read-recently-played"  # For recent playback
         ]
         
-        # Build OAuth URL
+        # Build OAuth URL with proper parameter encoding
         auth_params = {
             "response_type": "code",
             "client_id": client_id,
-            "scope": " ".join(scopes),
+            "scope": " ".join(scopes),  # Space-separated scopes
             "redirect_uri": redirect_uri,
-            "state": state,
-            "show_dialog": "true"  # Force consent screen
+            "show_dialog": "true"  # Force consent screen to ensure fresh permissions
         }
         
+        # Add state if we have parameters
+        if state:
+            auth_params["state"] = state
+        
+        # Properly encode all parameters
         auth_url = "https://accounts.spotify.com/authorize?" + "&".join([
             f"{k}={urllib.parse.quote(str(v))}" for k, v in auth_params.items()
         ])
         
-        print(f"🔗 Generated Spotify OAuth URL for user: {user_email}, row_id: {row_id}")
-        print(f"🔗 OAuth URL: {auth_url}")
+        print(f"🔗 Generated Spotify OAuth URL:")
+        print(f"   User email: {user_email}")
+        print(f"   Row ID: {row_id}")
+        print(f"   Scopes: {', '.join(scopes)}")
+        print(f"   Redirect URI: {redirect_uri}")
+        print(f"   State: {state}")
+        print(f"   OAuth URL: {auth_url}")
         
         if request.method == 'POST':
-            # Return JSON for API calls
             return jsonify({
                 "status": "success",
                 "auth_url": auth_url,
                 "user_email": user_email,
                 "row_id": row_id,
+                "scopes": scopes,
                 "message": "Redirect user to auth_url to connect Spotify"
             })
         else:
-            # Redirect for browser calls
             return redirect(auth_url)
             
     except Exception as e:
