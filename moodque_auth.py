@@ -1,4 +1,4 @@
-# Add this import at the top of moodque_auth.py
+# Complete moodque_auth.py - Updated with callback route removed to avoid conflicts
 
 import os
 import base64
@@ -8,15 +8,13 @@ import time
 import urllib.parse
 import requests
 from dotenv import load_dotenv
-from datetime import datetime  # ADD THIS LINE - was missing!
+from datetime import datetime
 
 load_dotenv()
 
 from flask import Blueprint, request, jsonify, redirect
 import firebase_admin
 from firebase_admin import credentials, firestore
-
-# Rest of your existing moodque_auth.py code remains the same...
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -30,26 +28,38 @@ SCOPES = (
     "playlist-modify-public "
     "user-read-private "
     "user-read-email "
-    "user-top-read"
+    "user-top-read "
+    "user-library-read "
+    "user-read-recently-played"
 )
 
-#update scopes moodque auth
 def init_firebase_app():
     """
     Initializes Firebase Admin SDK.
     Only runs once.
     """
     if not firebase_admin._apps:
-        # Check if we're in a Railway environment with JSON in env
-        if "FIREBASE_CREDENTIALS_JSON" in os.environ:
-            service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
-            cred = credentials.Certificate(service_account_info)
-        else:
-            # Fallback to local file if not in Railway
-            cred_path = os.path.join("config", "firebase_credentials.json")
-            cred = credentials.Certificate(cred_path)
-        
-        firebase_admin.initialize_app(cred)
+        try:
+            # Check if we're in a Railway environment with JSON in env
+            if "FIREBASE_CREDENTIALS_JSON" in os.environ:
+                print("🔥 Loading Firebase credentials from FIREBASE_CREDENTIALS_JSON")
+                service_account_info = json.loads(os.environ["FIREBASE_CREDENTIALS_JSON"])
+                cred = credentials.Certificate(service_account_info)
+            elif "FIREBASE_ADMIN_JSON" in os.environ:
+                print("🔥 Loading Firebase credentials from FIREBASE_ADMIN_JSON")
+                service_account_info = json.loads(os.environ["FIREBASE_ADMIN_JSON"])
+                cred = credentials.Certificate(service_account_info)
+            else:
+                # Fallback to local file if not in Railway
+                print("🔥 Loading Firebase credentials from local file")
+                cred_path = os.path.join("config", "firebase_credentials.json")
+                cred = credentials.Certificate(cred_path)
+            
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase initialized successfully in moodque_auth")
+        except Exception as e:
+            print(f"❌ Firebase initialization failed in moodque_auth: {e}")
+            raise
 
 # Initialize Firebase before creating the client
 init_firebase_app()
@@ -100,120 +110,87 @@ def refresh_token_with_spotify(refresh_token):
     token_data = response.json()
     return {
         "access_token": token_data["access_token"],
-        "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data["expires_in"])).isoformat()
+        "expires_at": (datetime.utcnow() + datetime.timedelta(seconds=token_data["expires_in"])).isoformat()
     }
 
 @auth_bp.route("/login")
 def login():
+    """Generate Spotify authorization URL with enhanced state handling"""
+    
+    # Get optional parameters from query string
+    user_email = request.args.get('user_email', '')
+    return_url = request.args.get('return_url', 'https://moodque.glide.page')
+    
+    # Create state parameter with user context
+    state_params = {}
+    if user_email:
+        state_params['user_email'] = user_email
+    if return_url:
+        state_params['return_url'] = return_url
+    
+    # Encode state as URL parameters
+    state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+    
     query_params = {
         "response_type": "code",
         "client_id": SPOTIFY_CLIENT_ID,
         "scope": SCOPES,
         "redirect_uri": SPOTIFY_REDIRECT_URI,
-        "show_dialog": "true"
+        "show_dialog": "true",
+        "state": state
     }
+    
     auth_url = "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(query_params)
+    print(f"🔗 Generated Spotify auth URL: {auth_url}")
+    
     return redirect(auth_url)
 
-# Update your callback function in moodque_auth.py or webhook service
+# REMOVED: The callback route is now handled in moodQueSocial_webhook_service.py 
+# to avoid conflicts and provide better error handling
 
-@auth_bp.route("/callback")
-def callback():
-    code = request.args.get("code")
-    state = request.args.get("state", "")
+@auth_bp.route("/test_auth_flow")
+def test_auth_flow():
+    """Test endpoint to check auth flow configuration"""
+    return jsonify({
+        "status": "auth_flow_test",
+        "client_id_present": bool(SPOTIFY_CLIENT_ID),
+        "client_secret_present": bool(SPOTIFY_CLIENT_SECRET),
+        "refresh_token_present": bool(SPOTIFY_REFRESH_TOKEN),
+        "redirect_uri": SPOTIFY_REDIRECT_URI,
+        "scopes": SCOPES.split(),
+        "callback_note": "Callback is handled in main webhook service"
+    })
+
+@auth_bp.route("/generate_auth_url")
+def generate_auth_url():
+    """Generate auth URL without redirecting - useful for testing"""
     
-    if not code:
-        # Redirect back to Glide with error
-        return redirect("https://moodque.glide.page?spotify_error=no_code")
-
-    # Parse state to get user info and return URL
-    state_params = {}
-    if state:
-        for param in state.split("&"):
-            if "=" in param:
-                key, value = param.split("=", 1)
-                state_params[key] = urllib.parse.unquote(value)
+    user_email = request.args.get('user_email', 'test@example.com')
+    return_url = request.args.get('return_url', 'https://moodque.glide.page')
     
-    user_id = state_params.get("user_id", "anonymous")
-    return_url = state_params.get("return_url", "https://moodque.glide.page")
-
-    # Exchange code for tokens
-    token_url = "https://accounts.spotify.com/api/token"
-    payload = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": os.getenv("SPOTIFY_REDIRECT_URI"),
-        "client_id": os.getenv("SPOTIFY_CLIENT_ID"),
-        "client_secret": os.getenv("SPOTIFY_CLIENT_SECRET"),
+    state_params = {
+        'user_email': user_email,
+        'return_url': return_url,
+        'test': 'true'
     }
-
-    response = requests.post(token_url, data=payload)
-    if response.status_code != 200:
-        # Redirect back to Glide with error
-        return redirect(f"{return_url}?spotify_error=token_failed")
-
-    token_data = response.json()
-    access_token = token_data.get("access_token")
-    refresh_token = token_data.get("refresh_token")
-    new_scopes = set(token_data.get("scope", "").split())
-
-    # Get Spotify user profile
-    user_profile_resp = requests.get(
-        "https://api.spotify.com/v1/me",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-
-    if user_profile_resp.status_code != 200:
-        # Redirect back to Glide with error
-        return redirect(f"{return_url}?spotify_error=profile_failed")
-
-    spotify_user = user_profile_resp.json()
-    spotify_user_id = spotify_user["id"]
-    spotify_display_name = spotify_user.get("display_name", spotify_user_id)
-
-    try:
-        # Get any existing user data
-        user_doc_ref = db.collection("users").document(spotify_user_id)
-        existing_data = {}
-        existing_doc = user_doc_ref.get()
-        if existing_doc.exists:
-            existing_data = existing_doc.to_dict()
-
-        # Always update access token and expiry
-        existing_data["spotify_access_token"] = access_token
-        existing_data["spotify_token_expires_at"] = str(time.time() + token_data.get("expires_in", 3600))
-
-        # Only overwrite refresh token if we got a new one
-        if refresh_token:
-            existing_data["spotify_refresh_token"] = refresh_token
-
-        # Merge scopes
-        existing_scopes = set(existing_data.get("spotify_scopes", "").split())
-        merged_scopes = existing_scopes.union(new_scopes)
-        existing_data["spotify_scopes"] = " ".join(sorted(merged_scopes))
-
-        # Always store display name and IDs
-        existing_data["glide_user_id"] = user_id
-        existing_data["spotify_user_id"] = spotify_user_id
-        existing_data["spotify_display_name"] = spotify_display_name
-        existing_data["connected_at"] = datetime.now().isoformat()
-
-        # Save back to Firestore
-        user_doc_ref.set(existing_data, merge=True)
-        
-        print(f"✅ Spotify connected for Glide user {user_id} -> Spotify user {spotify_user_id}")
-
-        # Redirect back to Glide with success info
-        success_params = {
-            "spotify_connected": "true",
-            "spotify_user": spotify_user_id,
-            "spotify_name": spotify_display_name,
-            "connection_status": "success"
-        }
-        
-        success_url = f"{return_url}?" + "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in success_params.items()])
-        return redirect(success_url)
-
-    except Exception as e:
-        print(f"❌ Error saving to Firebase: {e}")
-        return redirect(f"{return_url}?spotify_error=database_failed")
+    
+    state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+    
+    query_params = {
+        "response_type": "code",
+        "client_id": SPOTIFY_CLIENT_ID,
+        "scope": SCOPES,
+        "redirect_uri": SPOTIFY_REDIRECT_URI,
+        "show_dialog": "true",
+        "state": state
+    }
+    
+    auth_url = "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(query_params)
+    
+    return jsonify({
+        "status": "success",
+        "auth_url": auth_url,
+        "state_params": state_params,
+        "redirect_uri": SPOTIFY_REDIRECT_URI,
+        "instructions": "Use this URL to test the OAuth flow"
+    })
