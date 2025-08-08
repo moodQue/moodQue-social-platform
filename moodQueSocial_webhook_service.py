@@ -98,9 +98,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 app.register_blueprint(auth_bp)
 
 # --- FIXED SPOTIFY OAUTH CALLBACK ---
+# Updated Spotify OAuth callback in moodQueSocial_webhook_service.py
+# Replace the existing callback function with this updated version
+
 @app.route("/callback", methods=["GET"])
 def spotify_callback():
-    """Complete Spotify OAuth callback with comprehensive error handling"""
+    """Complete Spotify OAuth callback with webhook response to update Glide table"""
     
     # Extract parameters
     code = request.args.get("code")
@@ -133,6 +136,7 @@ def spotify_callback():
             print(f"⚠️ Error parsing state: {e}")
     
     glide_user_email = state_params.get("user_email", "")
+    glide_row_id = state_params.get("row_id", "")  # Get row_id from state if provided
     return_url = state_params.get("return_url", "https://moodque.glide.page")
     
     # Step 1: Exchange code for tokens
@@ -201,6 +205,11 @@ def spotify_callback():
     spotify_user_id = user_profile.get("id")
     spotify_display_name = user_profile.get("display_name", "")
     spotify_email = user_profile.get("email", "")
+    spotify_country = user_profile.get("country", "")
+    spotify_product = user_profile.get("product", "")
+    spotify_followers = user_profile.get("followers", {}).get("total", 0)
+    spotify_images = user_profile.get("images", [])
+    spotify_avatar_url = spotify_images[0].get("url") if spotify_images else ""
     
     if not spotify_user_id:
         print("❌ Missing Spotify user ID")
@@ -232,13 +241,15 @@ def spotify_callback():
         "spotify_connected": True,
         
         # Additional profile data
-        "spotify_country": user_profile.get("country", ""),
-        "spotify_product": user_profile.get("product", ""),
-        "spotify_followers": user_profile.get("followers", {}).get("total", 0),
-        "spotify_images": user_profile.get("images", []),
+        "spotify_country": spotify_country,
+        "spotify_product": spotify_product,
+        "spotify_followers": spotify_followers,
+        "spotify_images": spotify_images,
+        "spotify_avatar_url": spotify_avatar_url,
         
         # Glide integration
         "glide_user_email": glide_user_email,
+        "glide_row_id": glide_row_id,  # Store the row_id if provided
         "connected_at": connection_timestamp,
         "last_token_refresh": connection_timestamp,
         
@@ -268,7 +279,9 @@ def spotify_callback():
                 "spotify_token_expires_at": str(int(time.time()) + expires_in),
                 "spotify_connected": True,
                 "last_token_refresh": connection_timestamp,
-                "glide_user_email": glide_user_email or existing_data.get("glide_user_email", "")
+                "glide_user_email": glide_user_email or existing_data.get("glide_user_email", ""),
+                "glide_row_id": glide_row_id or existing_data.get("glide_row_id", ""),
+                "spotify_avatar_url": spotify_avatar_url or existing_data.get("spotify_avatar_url", "")
             })
             
             # Only update refresh token if we got a new one
@@ -276,9 +289,13 @@ def spotify_callback():
                 existing_data["spotify_refresh_token"] = refresh_token
             
             user_doc_ref.set(existing_data, merge=True)
+            
+            # Use the existing or new row_id for webhook
+            final_row_id = glide_row_id or existing_data.get("glide_row_id", "")
         else:
             print("👤 Creating new user...")
             user_doc_ref.set(user_doc, merge=True)
+            final_row_id = glide_row_id
         
         print(f"✅ User data saved successfully: {spotify_user_id}")
         
@@ -288,35 +305,62 @@ def spotify_callback():
         traceback.print_exc()
         return redirect(f"{return_url}?spotify_error=database_failed")
     
-    # Step 5: Optional - Send data back to Glide webhook
+    # Step 5: Send webhook data to Glide to update User Profiles table
     try:
         glide_webhook_url = os.environ.get("GLIDE_RETURN_WEBHOOK_URL")
-        if glide_webhook_url and glide_user_email:
-            print("📤 Sending connection status to Glide...")
+        if glide_webhook_url:
+            print("📤 Sending Spotify connection data to Glide webhook...")
             
-            glide_data = {
-                "user_email": glide_user_email,
-                "spotify_connected": True,
-                "spotify_user_id": spotify_user_id,
-                "spotify_display_name": spotify_display_name,
-                "spotify_email": spotify_email,
-                "connected_at": connection_timestamp,
-                "connection_status": "success"
+            # Create the webhook payload in the format your Incoming Webhook Data table expects
+            webhook_data = {
+                "jsonBody": {
+                    "row_id": final_row_id or spotify_user_id,  # Use row_id or fallback to spotify_user_id
+                    "status": "connected",
+                    "user_id": spotify_user_id,
+                    "has_code": "true",
+                    "created_at": connection_timestamp,
+                    "like_count": 0,
+                    "play_count": 0,
+                    "playlist_id": "",
+                    "shared_count": 0,
+                    "spotify_url": f"https://open.spotify.com/user/{spotify_user_id}",
+                    "spotify_connected": True,
+                    "spotify_user_id": spotify_user_id,
+                    "spotify_display_name": spotify_display_name,
+                    "spotify_connected_at": connection_timestamp,
+                    "spotify_avatar_url": spotify_avatar_url,
+                    "spotify_email": spotify_email,
+                    "spotify_country": spotify_country,
+                    "spotify_product": spotify_product,
+                    "spotify_followers": spotify_followers,
+                    "glide_user_email": glide_user_email
+                }
             }
             
+            # Log the webhook payload for debugging
+            print(f"📋 Webhook payload: {json.dumps(webhook_data, indent=2)}")
+            
+            # Send the webhook
             webhook_response = requests.post(
                 glide_webhook_url, 
-                json=glide_data, 
-                timeout=5
+                json=webhook_data, 
+                headers={'Content-Type': 'application/json'},
+                timeout=10
             )
             
+            print(f"📡 Webhook response status: {webhook_response.status_code}")
+            print(f"📡 Webhook response body: {webhook_response.text}")
+            
             if webhook_response.status_code == 200:
-                print("✅ Glide webhook notification sent")
+                print("✅ Glide webhook notification sent successfully")
             else:
                 print(f"⚠️ Glide webhook failed: {webhook_response.status_code}")
+                print(f"Response: {webhook_response.text}")
                 
     except Exception as e:
         print(f"⚠️ Glide webhook notification failed (non-critical): {e}")
+        import traceback
+        traceback.print_exc()
     
     # Step 6: Redirect back to app with success
     success_params = {
@@ -1445,6 +1489,100 @@ def not_found(error):
 def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/spotify_connect', methods=['POST', 'GET'])
+def spotify_connect():
+    """
+    Endpoint for Glide to initiate Spotify OAuth with proper state parameters
+    This ensures row_id and user info are passed through the OAuth flow
+    """
+    try:
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            user_email = data.get('user_email') or data.get('email', '')
+            row_id = data.get('row_id') or data.get('id', '')
+            return_url = data.get('return_url', 'https://moodque.glide.page')
+        else:
+            # GET request with query parameters
+            user_email = request.args.get('user_email') or request.args.get('email', '')
+            row_id = request.args.get('row_id') or request.args.get('id', '')
+            return_url = request.args.get('return_url', 'https://moodque.glide.page')
+        
+        client_id = os.getenv("SPOTIFY_CLIENT_ID")
+        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+        
+        if not client_id or not redirect_uri:
+            return jsonify({
+                "error": "Missing Spotify configuration",
+                "status": "error"
+            }), 500
+        
+        # Create state parameter with all necessary data
+        state_params = {}
+        if user_email:
+            state_params['user_email'] = user_email
+        if row_id:
+            state_params['row_id'] = row_id
+        if return_url:
+            state_params['return_url'] = return_url
+        
+        # Encode state as URL parameters
+        state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+        
+        # Spotify OAuth scopes
+        scopes = [
+            "playlist-modify-private",
+            "playlist-modify-public", 
+            "user-read-private",
+            "user-read-email",
+            "user-top-read",
+            "user-library-read",
+            "user-read-recently-played"
+        ]
+        
+        # Build OAuth URL
+        auth_params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "scope": " ".join(scopes),
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "show_dialog": "true"  # Force consent screen
+        }
+        
+        auth_url = "https://accounts.spotify.com/authorize?" + "&".join([
+            f"{k}={urllib.parse.quote(str(v))}" for k, v in auth_params.items()
+        ])
+        
+        print(f"🔗 Generated Spotify OAuth URL for user: {user_email}, row_id: {row_id}")
+        print(f"🔗 OAuth URL: {auth_url}")
+        
+        if request.method == 'POST':
+            # Return JSON for API calls
+            return jsonify({
+                "status": "success",
+                "auth_url": auth_url,
+                "user_email": user_email,
+                "row_id": row_id,
+                "message": "Redirect user to auth_url to connect Spotify"
+            })
+        else:
+            # Redirect for browser calls
+            return redirect(auth_url)
+            
+    except Exception as e:
+        logger.error(f"❌ Error in spotify_connect: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        if request.method == 'POST':
+            return jsonify({
+                "status": "error",
+                "error": str(e)
+            }), 500
+        else:
+            error_url = f"{return_url}?spotify_error=connection_failed"
+            return redirect(error_url)
 
 if __name__ == '__main__':
     app.run(debug=True)
