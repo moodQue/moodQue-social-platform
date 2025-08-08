@@ -2137,16 +2137,18 @@ def debug_state_parsing():
 # Replace your existing /spotify_connect_and_redirect endpoint with this version
 # that handles the redirect on the backend instead of returning JSON
 
+# Update your /spotify_connect_and_redirect endpoint to return JSON instead of redirect
+# Glide workflows can't follow redirects, but they can handle JSON responses
+
 @app.route('/spotify_connect_and_redirect', methods=['POST'])
 def spotify_connect_and_redirect():
     """
-    Updated endpoint that directly redirects to Spotify instead of returning JSON
-    This bypasses Glide's dynamic URL issues
+    Return JSON response that Glide can use in the Open Link action
     """
     try:
         data = request.get_json() or {}
         
-        print(f"🔗 Direct redirect request received:")
+        print(f"🔗 Spotify connect request:")
         print(f"   Raw data: {json.dumps(data, indent=2)}")
         
         # Extract user_email and row_id from Glide's format
@@ -2161,13 +2163,7 @@ def spotify_connect_and_redirect():
                 row_id = key
                 print(f"🔑 Extracted row_id: {row_id}")
         
-        # Fallback to normal format
-        if not user_email:
-            user_email = data.get('user_email', data.get('User Email', ''))
-        if not row_id:
-            row_id = data.get('row_id', data.get('Row ID', ''))
-        
-        print(f"🔗 Final values:")
+        print(f"🔗 Final extracted values:")
         print(f"   User email: '{user_email}'")
         print(f"   Row ID: '{row_id}'")
         
@@ -2176,17 +2172,10 @@ def spotify_connect_and_redirect():
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
         
         if not client_id or not redirect_uri:
-            # Return HTML error page instead of JSON
-            return f"""
-            <html>
-                <head><title>Configuration Error</title></head>
-                <body>
-                    <h1>Configuration Error</h1>
-                    <p>Spotify configuration is missing. Please contact support.</p>
-                    <a href="https://moodque.glide.page">Return to MoodQue</a>
-                </body>
-            </html>
-            """, 500
+            return jsonify({
+                "status": "error",
+                "error": "Missing Spotify configuration"
+            }), 500
         
         # Create state parameters with extracted data
         state_params = {
@@ -2223,28 +2212,35 @@ def spotify_connect_and_redirect():
         ])
         
         print(f"🔗 Generated OAuth URL: {auth_url}")
-        print(f"🔄 Redirecting user to Spotify...")
         
-        # DIRECT REDIRECT instead of returning JSON
-        return redirect(auth_url)
+        # Return JSON with multiple field names for Glide to try
+        response_data = {
+            "status": "success",
+            "url": auth_url,
+            "auth_url": auth_url,
+            "redirect_url": auth_url,
+            "spotify_url": auth_url,
+            "link": auth_url,
+            "oauth_url": auth_url,
+            "message": "Redirect to Spotify authentication",
+            "extracted_data": {
+                "user_email": user_email,
+                "row_id": row_id
+            }
+        }
+        
+        print(f"📤 Returning JSON response with auth URL")
+        return jsonify(response_data)
         
     except Exception as e:
-        print(f"❌ Error in spotify_connect_and_redirect: {e}")
+        print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         
-        # Return HTML error page instead of JSON
-        error_page = f"""
-        <html>
-            <head><title>Spotify Connection Error</title></head>
-            <body>
-                <h1>Spotify Connection Error</h1>
-                <p>There was an error connecting to Spotify: {str(e)}</p>
-                <a href="https://moodque.glide.page">Return to MoodQue</a>
-            </body>
-        </html>
-        """
-        return error_page, 500
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
         
 # Alternative approach: Direct redirect endpoint
 @app.route('/manual_spotify_redirect', methods=['GET'])
