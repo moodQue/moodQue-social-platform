@@ -9,7 +9,7 @@ import base64
 from moodque_engine import MoodQueEngine
 from moodque_auth import auth_bp
 from flask import Flask, request, redirect, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta
 from firebase_admin import firestore
 from ml_reengagement_system import MLReengagementEngine
 
@@ -2137,56 +2137,63 @@ def debug_state_parsing():
 @app.route('/spotify_connect_and_redirect', methods=['POST'])
 def spotify_connect_and_redirect():
     """
-    Single endpoint for Glide to call that generates OAuth URL with proper state
-    This ensures row_id and user_email are properly passed through the flow
+    Fixed endpoint that handles Glide's unusual request format where
+    values are sent as keys instead of proper key-value pairs
     """
     try:
         data = request.get_json() or {}
-        user_email = data.get('user_email', '')
-        row_id = data.get('row_id', '')
-        return_url = data.get('return_url', 'https://moodque.glide.page')
         
-        print(f"🔗 Direct Spotify connect request:")
-        print(f"   Row ID: '{row_id}'")
-        print(f"   User Email: '{user_email}'")
-        print(f"   Return URL: '{return_url}'")
-        print(f"   Full request data: {json.dumps(data, indent=2)}")
+        print(f"🔗 Raw request data: {json.dumps(data, indent=2)}")
         
-        # Validate we have required data
-        if not row_id:
-            print("⚠️ Warning: No row_id provided")
+        # Extract user_email and row_id from Glide's format
+        user_email = ""
+        row_id = ""
+        
+        for key, value in data.items():
+            if "@" in key:  # This is likely the email
+                user_email = key
+                print(f"📧 Found email: {user_email}")
+            elif key != value and len(key) > 10:  # This is likely the row_id
+                row_id = key
+                print(f"🔑 Found row_id: {row_id}")
+            elif key == value and "@" not in key:  # Alternative row_id detection
+                row_id = key
+                print(f"🔑 Alternative row_id: {row_id}")
+        
+        # Fallback: try normal format too
         if not user_email:
-            print("⚠️ Warning: No user_email provided")
+            user_email = data.get('user_email', data.get('User Email', ''))
+        if not row_id:
+            row_id = data.get('row_id', data.get('Row ID', ''))
         
+        print(f"🔗 Final extracted values:")
+        print(f"   User email: '{user_email}'")
+        print(f"   Row ID: '{row_id}'")
+        
+        if not user_email:
+            print("⚠️ Warning: No user_email extracted")
+        if not row_id:
+            print("⚠️ Warning: No row_id extracted")
+        
+        # Generate OAuth URL
         client_id = os.getenv("SPOTIFY_CLIENT_ID")
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
         
         if not client_id or not redirect_uri:
-            print("❌ Missing Spotify configuration")
             return jsonify({
                 "status": "error",
                 "error": "Missing Spotify configuration"
             }), 500
         
-        # Create state parameters with all data
+        # Create state parameters
         state_params = {
-            'return_url': return_url,
-            'timestamp': str(int(time.time()))
+            'user_email': user_email,
+            'row_id': row_id,
+            'return_url': 'https://moodque.glide.page'
         }
         
-        # Add user data to state
-        if user_email:
-            state_params['user_email'] = user_email
-        if row_id:
-            state_params['row_id'] = row_id
-        
-        # Encode state
         state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
         
-        print(f"🔗 State parameters: {state_params}")
-        print(f"🔗 Encoded state: {state}")
-        
-        # Spotify OAuth scopes
         scopes = [
             "user-read-private",
             "user-read-email", 
@@ -2197,7 +2204,6 @@ def spotify_connect_and_redirect():
             "user-read-recently-played"
         ]
         
-        # Build OAuth URL
         auth_params = {
             "response_type": "code",
             "client_id": client_id,
@@ -2213,17 +2219,15 @@ def spotify_connect_and_redirect():
         
         print(f"🔗 Generated OAuth URL: {auth_url}")
         
-        # Return response that Glide can use to redirect
         return jsonify({
             "status": "success",
-            "action": "redirect",
             "url": auth_url,
-            "auth_url": auth_url,  # Alternative field name
-            "redirect_url": auth_url,  # Another alternative
-            "message": "Redirecting to Spotify authentication...",
+            "auth_url": auth_url,
+            "redirect_url": auth_url,
+            "spotify_url": auth_url,  # Try multiple field names
             "debug_info": {
-                "row_id_received": row_id,
-                "user_email_received": user_email,
+                "extracted_email": user_email,
+                "extracted_row_id": row_id,
                 "state_params": state_params
             }
         })
@@ -2235,11 +2239,109 @@ def spotify_connect_and_redirect():
         
         return jsonify({
             "status": "error",
-            "error": str(e),
-            "debug_info": {
-                "request_data": data if 'data' in locals() else "N/A"
-            }
+            "error": str(e)
         }), 500
+        
+# Alternative approach: Direct redirect endpoint
+@app.route('/manual_spotify_redirect', methods=['GET'])
+def manual_spotify_redirect():
+    """
+    Direct redirect endpoint that generates OAuth URL and immediately redirects
+    Use this if Glide dynamic URLs don't work properly
+    """
+    try:
+        # Get parameters from query string
+        user_email = request.args.get('user_email', '')
+        row_id = request.args.get('row_id', '')
+        
+        print(f"🔗 Manual redirect request:")
+        print(f"   User email: '{user_email}'")
+        print(f"   Row ID: '{row_id}'")
+        
+        # Generate OAuth URL
+        client_id = os.getenv("SPOTIFY_CLIENT_ID")
+        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+        
+        state_params = {
+            'user_email': user_email,
+            'row_id': row_id,
+            'return_url': 'https://moodque.glide.page'
+        }
+        
+        state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+        
+        scopes = [
+            "user-read-private", "user-read-email", "playlist-modify-private",
+            "playlist-modify-public", "user-top-read", "user-library-read",
+            "user-read-recently-played"
+        ]
+        
+        auth_params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "scope": " ".join(scopes),
+            "redirect_uri": redirect_uri,
+            "show_dialog": "true",
+            "state": state
+        }
+        
+        auth_url = "https://accounts.spotify.com/authorize?" + "&".join([
+            f"{k}={urllib.parse.quote(str(v))}" for k, v in auth_params.items()
+        ])
+        
+        print(f"🔗 Redirecting to: {auth_url}")
+        
+        # Direct redirect instead of returning JSON
+        return redirect(auth_url)
+        
+    except Exception as e:
+        print(f"❌ Manual redirect error: {e}")
+        return redirect("https://moodque.glide.page?error=spotify_redirect_failed")
+
+# Also add an endpoint that receives the webhook and stores the data for the redirect
+@app.route('/store_spotify_data', methods=['POST'])
+def store_spotify_data():
+    """
+    Store user data in session/cache for manual redirect
+    Alternative workflow approach
+    """
+    try:
+        data = request.get_json() or {}
+        
+        # Extract data same way as before
+        user_email = ""
+        row_id = ""
+        
+        for key, value in data.items():
+            if "@" in key:
+                user_email = key
+            elif key == value and "@" not in key:
+                row_id = key
+        
+        # Store in a simple in-memory cache (you could use Redis for production)
+        session_id = str(uuid.uuid4())
+        
+        # Store in Firebase temporarily
+        temp_data = {
+            "user_email": user_email,
+            "row_id": row_id,
+            "created_at": datetime.now().isoformat(),
+            "expires_at": (datetime.datetime.now() + datetime.timedelta(minutes=5)).isoformat()
+        }
+        
+        db.collection("temp_spotify_data").document(session_id).set(temp_data)
+        
+        redirect_url = f"https://web-production-ed9ad.up.railway.app/manual_spotify_redirect?session={session_id}"
+        
+        return jsonify({
+            "status": "success",
+            "url": redirect_url,
+            "auth_url": redirect_url,
+            "session_id": session_id
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500        
 
 # Also add a simple test endpoint to verify Glide can reach your service
 @app.route('/test_glide_connection', methods=['POST'])
