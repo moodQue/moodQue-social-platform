@@ -5,6 +5,7 @@ import requests
 import urllib.parse
 import time
 import uuid
+import base64
 from moodque_engine import MoodQueEngine
 from moodque_auth import auth_bp
 from flask import Flask, request, redirect, jsonify
@@ -1550,24 +1551,36 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
-# Make sure to import base64 at the top of your file
-import base64
-
 @app.route('/spotify_connect', methods=['POST', 'GET'])
 def spotify_connect():
     """
     Endpoint for Glide to initiate Spotify OAuth with proper state parameters
+    FIXED: Ensures row_id and user_email are properly passed through the OAuth flow
     """
     try:
         if request.method == 'POST':
             data = request.get_json() or {}
             user_email = data.get('user_email') or data.get('email', '')
-            row_id = data.get('row_id') or data.get('id', '')
+            row_id = data.get('row_id') or data.get('id', '') or data.get('🔒 row_id', '')  # Check multiple row_id formats
             return_url = data.get('return_url', 'https://moodque.glide.page')
         else:
+            # GET request with query parameters
             user_email = request.args.get('user_email') or request.args.get('email', '')
-            row_id = request.args.get('row_id') or request.args.get('id', '')
+            row_id = request.args.get('row_id') or request.args.get('id', '') or request.args.get('🔒 row_id', '')
             return_url = request.args.get('return_url', 'https://moodque.glide.page')
+        
+        # Debug logging to see what we received
+        print(f"🔗 Spotify connect request received:")
+        print(f"   Method: {request.method}")
+        print(f"   User email: '{user_email}'")
+        print(f"   Row ID: '{row_id}'")
+        print(f"   Return URL: '{return_url}'")
+        
+        if request.method == 'POST':
+            print(f"   POST data keys: {list(data.keys()) if data else 'No data'}")
+            print(f"   POST data: {json.dumps(data, indent=2) if data else 'No data'}")
+        else:
+            print(f"   GET args: {dict(request.args)}")
         
         client_id = os.getenv("SPOTIFY_CLIENT_ID")
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
@@ -1581,22 +1594,34 @@ def spotify_connect():
                 "status": "error"
             }), 500
         
-        # Create state parameter with all necessary data
-        state_params = {}
+        # CRITICAL: Always include state parameters even if empty
+        # This ensures we can track the request even without user info
+        state_params = {
+            'return_url': return_url,
+            'timestamp': str(int(time.time()))  # Add timestamp for uniqueness
+        }
+        
+        # Add user info if available
         if user_email:
             state_params['user_email'] = user_email
+            print(f"✅ Added user_email to state: {user_email}")
+        else:
+            print("⚠️ No user_email provided - will be 'unknown' in callback")
+        
         if row_id:
             state_params['row_id'] = row_id
-        if return_url:
-            state_params['return_url'] = return_url
+            print(f"✅ Added row_id to state: {row_id}")
+        else:
+            print("⚠️ No row_id provided - will be 'unknown' in callback")
         
         # Encode state as URL parameters
         state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+        print(f"🔗 Encoded state: {state}")
         
-        # CORRECTED: Explicit scopes that work for user profile access
+        # Spotify OAuth scopes
         scopes = [
-            "user-read-private",      # REQUIRED for /me endpoint
-            "user-read-email",        # REQUIRED for email access
+            "user-read-private",      # Required for /me endpoint
+            "user-read-email",        # Required for email access
             "playlist-modify-private", # For creating private playlists
             "playlist-modify-public",  # For creating public playlists
             "user-top-read",          # For top artists/tracks
@@ -1610,12 +1635,9 @@ def spotify_connect():
             "client_id": client_id,
             "scope": " ".join(scopes),  # Space-separated scopes
             "redirect_uri": redirect_uri,
-            "show_dialog": "true"  # Force consent screen to ensure fresh permissions
+            "show_dialog": "true",  # Force consent screen
+            "state": state  # Always include state
         }
-        
-        # Add state if we have parameters
-        if state:
-            auth_params["state"] = state
         
         # Properly encode all parameters
         auth_url = "https://accounts.spotify.com/authorize?" + "&".join([
@@ -1623,12 +1645,10 @@ def spotify_connect():
         ])
         
         print(f"🔗 Generated Spotify OAuth URL:")
-        print(f"   User email: {user_email}")
-        print(f"   Row ID: {row_id}")
         print(f"   Scopes: {', '.join(scopes)}")
         print(f"   Redirect URI: {redirect_uri}")
-        print(f"   State: {state}")
-        print(f"   OAuth URL: {auth_url}")
+        print(f"   State parameters: {state_params}")
+        print(f"   Full OAuth URL: {auth_url}")
         
         if request.method == 'POST':
             return jsonify({
@@ -1636,8 +1656,13 @@ def spotify_connect():
                 "auth_url": auth_url,
                 "user_email": user_email,
                 "row_id": row_id,
+                "state_params": state_params,
                 "scopes": scopes,
-                "message": "Redirect user to auth_url to connect Spotify"
+                "message": "Redirect user to auth_url to connect Spotify",
+                "debug_info": {
+                    "received_data": data,
+                    "state_encoded": state
+                }
             })
         else:
             return redirect(auth_url)
@@ -1650,14 +1675,16 @@ def spotify_connect():
         if request.method == 'POST':
             return jsonify({
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
+                "debug_info": {
+                    "request_method": request.method,
+                    "request_data": request.get_json() if request.method == 'POST' else dict(request.args)
+                }
             }), 500
         else:
             error_url = f"{return_url}?spotify_error=connection_failed"
             return redirect(error_url)
-        
-# Add these admin endpoints to your moodQueSocial_webhook_service.py
-
+     
 @app.route('/admin/pending_users', methods=['GET'])
 def get_pending_users():
     """Get all users pending Spotify Developer Dashboard approval"""
@@ -1943,7 +1970,167 @@ def admin_stats():
         return jsonify({
             "status": "error",
             "error": str(e)
-        }), 500        
+        }), 500   
+        
+# Add this test endpoint to help debug the flow
+
+@app.route('/test_spotify_flow', methods=['POST', 'GET'])
+def test_spotify_flow():
+    """
+    Test endpoint to simulate the proper Glide -> Spotify flow with row_id
+    Use this to test before connecting from Glide
+    """
+    try:
+        if request.method == 'GET':
+            # Return a test form
+            test_form = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Test Spotify Connection Flow</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; }
+                    .form-group { margin: 15px 0; }
+                    label { display: block; margin-bottom: 5px; font-weight: bold; }
+                    input { padding: 8px; width: 300px; border: 1px solid #ccc; }
+                    button { padding: 10px 20px; background: #1db954; color: white; border: none; cursor: pointer; }
+                    .info { background: #f0f8ff; padding: 15px; margin: 20px 0; border-left: 4px solid #1db954; }
+                </style>
+            </head>
+            <body>
+                <h1>🎵 Test MoodQue Spotify Connection</h1>
+                
+                <div class="info">
+                    <h3>Instructions:</h3>
+                    <p>1. Fill out the form below with test data</p>
+                    <p>2. Click "Test Spotify Connection"</p>
+                    <p>3. Complete the Spotify OAuth flow</p>
+                    <p>4. Check your webhook data for the correct row_id</p>
+                </div>
+                
+                <form method="POST">
+                    <div class="form-group">
+                        <label>Row ID (from Glide):</label>
+                        <input type="text" name="row_id" value="test_row_123" placeholder="Enter row ID from Glide">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>User Email:</label>
+                        <input type="email" name="user_email" value="test@example.com" placeholder="Enter user email">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Return URL:</label>
+                        <input type="text" name="return_url" value="https://moodque.glide.page" placeholder="Where to redirect after connection">
+                    </div>
+                    
+                    <button type="submit">🎵 Test Spotify Connection</button>
+                </form>
+                
+                <div class="info">
+                    <h3>What This Tests:</h3>
+                    <p>• Row ID passing through OAuth state</p>
+                    <p>• User email preservation</p>
+                    <p>• Webhook data structure</p>
+                    <p>• Pending approval flow (if user not in Spotify dev dashboard)</p>
+                </div>
+            </body>
+            </html>
+            """
+            return test_form
+        
+        else:
+            # POST request - simulate Glide calling /spotify_connect
+            form_data = request.form
+            
+            test_data = {
+                "row_id": form_data.get("row_id", "test_row_123"),
+                "user_email": form_data.get("user_email", "test@example.com"), 
+                "return_url": form_data.get("return_url", "https://moodque.glide.page")
+            }
+            
+            print(f"🧪 Test Spotify flow initiated:")
+            print(f"   Row ID: {test_data['row_id']}")
+            print(f"   User Email: {test_data['user_email']}")
+            print(f"   Return URL: {test_data['return_url']}")
+            
+            # Call the spotify_connect endpoint with test data
+            with app.test_client() as client:
+                response = client.post('/spotify_connect', 
+                                     json=test_data, 
+                                     content_type='application/json')
+                
+                if response.status_code == 200:
+                    response_data = response.get_json()
+                    auth_url = response_data.get('auth_url')
+                    
+                    if auth_url:
+                        print(f"✅ Test OAuth URL generated successfully")
+                        return redirect(auth_url)
+                    else:
+                        return jsonify({
+                            "status": "error",
+                            "message": "No auth URL generated",
+                            "response": response_data
+                        }), 500
+                else:
+                    return jsonify({
+                        "status": "error",
+                        "message": f"spotify_connect failed with status {response.status_code}",
+                        "response": response.get_data(as_text=True)
+                    }), 500
+        
+    except Exception as e:
+        print(f"❌ Test flow error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+@app.route('/debug_state_parsing', methods=['GET'])
+def debug_state_parsing():
+    """Debug endpoint to test state parameter parsing"""
+    
+    # Test various state formats
+    test_states = [
+        "return_url=https%3A//moodque.glide.page",
+        "user_email=test@example.com&row_id=test123&return_url=https%3A//moodque.glide.page",
+        "user_email=jinneric@gmail.com&row_id=abc123&return_url=https%253A%252F%252Fmoodque.glide.page"
+    ]
+    
+    results = []
+    
+    for state in test_states:
+        print(f"🔍 Testing state: {state}")
+        
+        # Parse state parameters
+        state_params = {}
+        if state:
+            try:
+                for param in state.split("&"):
+                    if "=" in param:
+                        key, value = param.split("=", 1)
+                        state_params[key] = urllib.parse.unquote(value)
+            except Exception as e:
+                print(f"❌ Error parsing state: {e}")
+        
+        results.append({
+            "input_state": state,
+            "parsed_params": state_params,
+            "row_id": state_params.get("row_id", "NOT_FOUND"),
+            "user_email": state_params.get("user_email", "NOT_FOUND"),
+            "return_url": state_params.get("return_url", "NOT_FOUND")
+        })
+        
+        print(f"   Parsed: {state_params}")
+    
+    return jsonify({
+        "status": "success",
+        "test_results": results,
+        "message": "This shows how different state formats are parsed"
+    })             
 
 if __name__ == '__main__':
     app.run(debug=True)
