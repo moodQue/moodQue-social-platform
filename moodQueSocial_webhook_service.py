@@ -2130,7 +2130,141 @@ def debug_state_parsing():
         "status": "success",
         "test_results": results,
         "message": "This shows how different state formats are parsed"
-    })             
+    })    
+    
+# Add this endpoint to your moodQueSocial_webhook_service.py
+
+@app.route('/spotify_connect_and_redirect', methods=['POST'])
+def spotify_connect_and_redirect():
+    """
+    Single endpoint for Glide to call that generates OAuth URL with proper state
+    This ensures row_id and user_email are properly passed through the flow
+    """
+    try:
+        data = request.get_json() or {}
+        user_email = data.get('user_email', '')
+        row_id = data.get('row_id', '')
+        return_url = data.get('return_url', 'https://moodque.glide.page')
+        
+        print(f"🔗 Direct Spotify connect request:")
+        print(f"   Row ID: '{row_id}'")
+        print(f"   User Email: '{user_email}'")
+        print(f"   Return URL: '{return_url}'")
+        print(f"   Full request data: {json.dumps(data, indent=2)}")
+        
+        # Validate we have required data
+        if not row_id:
+            print("⚠️ Warning: No row_id provided")
+        if not user_email:
+            print("⚠️ Warning: No user_email provided")
+        
+        client_id = os.getenv("SPOTIFY_CLIENT_ID")
+        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+        
+        if not client_id or not redirect_uri:
+            print("❌ Missing Spotify configuration")
+            return jsonify({
+                "status": "error",
+                "error": "Missing Spotify configuration"
+            }), 500
+        
+        # Create state parameters with all data
+        state_params = {
+            'return_url': return_url,
+            'timestamp': str(int(time.time()))
+        }
+        
+        # Add user data to state
+        if user_email:
+            state_params['user_email'] = user_email
+        if row_id:
+            state_params['row_id'] = row_id
+        
+        # Encode state
+        state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+        
+        print(f"🔗 State parameters: {state_params}")
+        print(f"🔗 Encoded state: {state}")
+        
+        # Spotify OAuth scopes
+        scopes = [
+            "user-read-private",
+            "user-read-email", 
+            "playlist-modify-private",
+            "playlist-modify-public",
+            "user-top-read",
+            "user-library-read",
+            "user-read-recently-played"
+        ]
+        
+        # Build OAuth URL
+        auth_params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "scope": " ".join(scopes),
+            "redirect_uri": redirect_uri,
+            "show_dialog": "true",
+            "state": state
+        }
+        
+        auth_url = "https://accounts.spotify.com/authorize?" + "&".join([
+            f"{k}={urllib.parse.quote(str(v))}" for k, v in auth_params.items()
+        ])
+        
+        print(f"🔗 Generated OAuth URL: {auth_url}")
+        
+        # Return response that Glide can use to redirect
+        return jsonify({
+            "status": "success",
+            "action": "redirect",
+            "url": auth_url,
+            "auth_url": auth_url,  # Alternative field name
+            "redirect_url": auth_url,  # Another alternative
+            "message": "Redirecting to Spotify authentication...",
+            "debug_info": {
+                "row_id_received": row_id,
+                "user_email_received": user_email,
+                "state_params": state_params
+            }
+        })
+        
+    except Exception as e:
+        print(f"❌ Error in spotify_connect_and_redirect: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "debug_info": {
+                "request_data": data if 'data' in locals() else "N/A"
+            }
+        }), 500
+
+# Also add a simple test endpoint to verify Glide can reach your service
+@app.route('/test_glide_connection', methods=['POST'])
+def test_glide_connection():
+    """Simple endpoint to test Glide -> Backend connectivity"""
+    try:
+        data = request.get_json() or {}
+        
+        print(f"🧪 Test connection from Glide:")
+        print(f"   Headers: {dict(request.headers)}")
+        print(f"   Data: {json.dumps(data, indent=2)}")
+        
+        return jsonify({
+            "status": "success",
+            "message": "Connection successful!",
+            "received_data": data,
+            "timestamp": datetime.now().isoformat(),
+            "backend_status": "operational"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500             
 
 if __name__ == '__main__':
     app.run(debug=True)
