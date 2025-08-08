@@ -2134,58 +2134,61 @@ def debug_state_parsing():
     
 # Add this endpoint to your moodQueSocial_webhook_service.py
 
+# Replace your existing /spotify_connect_and_redirect endpoint with this version
+# that handles the redirect on the backend instead of returning JSON
+
 @app.route('/spotify_connect_and_redirect', methods=['POST'])
 def spotify_connect_and_redirect():
     """
-    Fixed endpoint that handles Glide's unusual request format where
-    values are sent as keys instead of proper key-value pairs
+    Updated endpoint that directly redirects to Spotify instead of returning JSON
+    This bypasses Glide's dynamic URL issues
     """
     try:
         data = request.get_json() or {}
         
-        print(f"🔗 Raw request data: {json.dumps(data, indent=2)}")
+        print(f"🔗 Direct redirect request received:")
+        print(f"   Raw data: {json.dumps(data, indent=2)}")
         
         # Extract user_email and row_id from Glide's format
         user_email = ""
         row_id = ""
         
         for key, value in data.items():
-            if "@" in key:  # This is likely the email
+            if "@" in key:  # This is the email
                 user_email = key
-                print(f"📧 Found email: {user_email}")
-            elif key != value and len(key) > 10:  # This is likely the row_id
+                print(f"📧 Extracted email: {user_email}")
+            elif key == value and "@" not in key and len(key) > 10:  # This is the row_id
                 row_id = key
-                print(f"🔑 Found row_id: {row_id}")
-            elif key == value and "@" not in key:  # Alternative row_id detection
-                row_id = key
-                print(f"🔑 Alternative row_id: {row_id}")
+                print(f"🔑 Extracted row_id: {row_id}")
         
-        # Fallback: try normal format too
+        # Fallback to normal format
         if not user_email:
             user_email = data.get('user_email', data.get('User Email', ''))
         if not row_id:
             row_id = data.get('row_id', data.get('Row ID', ''))
         
-        print(f"🔗 Final extracted values:")
+        print(f"🔗 Final values:")
         print(f"   User email: '{user_email}'")
         print(f"   Row ID: '{row_id}'")
-        
-        if not user_email:
-            print("⚠️ Warning: No user_email extracted")
-        if not row_id:
-            print("⚠️ Warning: No row_id extracted")
         
         # Generate OAuth URL
         client_id = os.getenv("SPOTIFY_CLIENT_ID")
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
         
         if not client_id or not redirect_uri:
-            return jsonify({
-                "status": "error",
-                "error": "Missing Spotify configuration"
-            }), 500
+            # Return HTML error page instead of JSON
+            return f"""
+            <html>
+                <head><title>Configuration Error</title></head>
+                <body>
+                    <h1>Configuration Error</h1>
+                    <p>Spotify configuration is missing. Please contact support.</p>
+                    <a href="https://moodque.glide.page">Return to MoodQue</a>
+                </body>
+            </html>
+            """, 500
         
-        # Create state parameters
+        # Create state parameters with extracted data
         state_params = {
             'user_email': user_email,
             'row_id': row_id,
@@ -2193,6 +2196,8 @@ def spotify_connect_and_redirect():
         }
         
         state = "&".join([f"{k}={urllib.parse.quote(str(v))}" for k, v in state_params.items()])
+        
+        print(f"🔗 State parameters: {state_params}")
         
         scopes = [
             "user-read-private",
@@ -2218,29 +2223,28 @@ def spotify_connect_and_redirect():
         ])
         
         print(f"🔗 Generated OAuth URL: {auth_url}")
+        print(f"🔄 Redirecting user to Spotify...")
         
-        return jsonify({
-            "status": "success",
-            "url": auth_url,
-            "auth_url": auth_url,
-            "redirect_url": auth_url,
-            "spotify_url": auth_url,  # Try multiple field names
-            "debug_info": {
-                "extracted_email": user_email,
-                "extracted_row_id": row_id,
-                "state_params": state_params
-            }
-        })
+        # DIRECT REDIRECT instead of returning JSON
+        return redirect(auth_url)
         
     except Exception as e:
         print(f"❌ Error in spotify_connect_and_redirect: {e}")
         import traceback
         traceback.print_exc()
         
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        # Return HTML error page instead of JSON
+        error_page = f"""
+        <html>
+            <head><title>Spotify Connection Error</title></head>
+            <body>
+                <h1>Spotify Connection Error</h1>
+                <p>There was an error connecting to Spotify: {str(e)}</p>
+                <a href="https://moodque.glide.page">Return to MoodQue</a>
+            </body>
+        </html>
+        """
+        return error_page, 500
         
 # Alternative approach: Direct redirect endpoint
 @app.route('/manual_spotify_redirect', methods=['GET'])
